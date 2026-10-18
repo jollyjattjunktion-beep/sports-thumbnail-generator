@@ -18,7 +18,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v4"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v5-cover-crop"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -474,11 +474,13 @@ RIGHT_PLAYER_Y = CANVAS_HEIGHT - RIGHT_PLAYER_HEIGHT  # 240 px from top
 
 
 def render_player_cutout(canvas, player_img, side):
-    """Fit a player inside a fixed side-specific frame without stretching or overflow.
+    """Fill the fixed left/right frame without stretching or spilling outside it.
 
-    The frame has an exact width/height, but the source image keeps its original
-    aspect ratio. Any subtle shadow is composited inside that same frame, so it
-    cannot spill beyond the left/right player area or create a large outer halo.
+    Use a proportional cover-fit rather than contain-fit. This makes the player's
+    shoulders/body fill more of each side like the reference thumbnail. Any extra
+    height is cropped at the bottom (behind the team banner / canvas edge), and any
+    extra width is cropped toward the center while preserving the outer edge.
+    The final composited player layer is always exactly the frame size.
     """
     if player_img is None:
         return
@@ -493,30 +495,30 @@ def render_player_cutout(canvas, player_img, side):
     else:
         raise ValueError("side must be 'left' or 'right'")
 
-    # Keep the image proportional and constrain it to the exact placement box.
-    scale = min(target_w / max(1, player.width), target_h / max(1, player.height))
-    fitted_w = max(1, min(target_w, int(round(player.width * scale))))
-    fitted_h = max(1, min(target_h, int(round(player.height * scale))))
-    player = player.resize((fitted_w, fitted_h), Image.Resampling.LANCZOS)
+    # Cover-fit: fill the whole fixed frame while preserving the photo's aspect ratio.
+    # Unlike contain-fit, this avoids narrow-looking players when the source has a
+    # portrait aspect ratio. Crop overflow only; never stretch the source.
+    scale = max(target_w / max(1, player.width), target_h / max(1, player.height))
+    scaled_w = max(target_w, int(round(player.width * scale)))
+    scaled_h = max(target_h, int(round(player.height * scale)))
+    player = player.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
 
-    # Fixed-size transparent frame; center horizontally and align to the bottom.
-    frame_player = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
-    offset_x = (target_w - fitted_w) // 2
-    offset_y = target_h - fitted_h
-    frame_player.alpha_composite(player, (offset_x, offset_y))
+    # Align the top of the head and the outer shoulder edge; crop overflow inward.
+    crop_x = 0 if side == "left" else scaled_w - target_w
+    crop_y = 0
+    player = player.crop((crop_x, crop_y, crop_x + target_w, crop_y + target_h))
 
-    # A restrained dark shadow, generated and clipped inside the same fixed frame.
+    # Fixed transparent frame; the player's alpha and shadow cannot escape its bounds.
+    frame_player = player.convert("RGBA")
     alpha = frame_player.getchannel("A")
     shadow_alpha = alpha.filter(ImageFilter.MaxFilter(11)).filter(ImageFilter.GaussianBlur(7))
-    shadow_alpha = shadow_alpha.point(lambda value: int(value * 0.18))
+    shadow_alpha = shadow_alpha.point(lambda value: int(value * 0.16))
     shadow = Image.new("RGBA", (target_w, target_h), (5, 10, 20, 0))
     shadow.putalpha(shadow_alpha)
 
     composite = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
     composite.alpha_composite(shadow)
     composite.alpha_composite(frame_player)
-
-    # Composite only the fixed frame. Nothing from the player or shadow extends outside it.
     canvas.alpha_composite(composite, (x, y))
 
 
