@@ -20,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v8-gemini-nano-banana-2-1"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v9-icc-profile-fetch-small-flags-outer-anchored-players"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -110,8 +110,20 @@ CAPTAIN_DATABASE = {
         "player_png": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Jos_Buttler_2022.png/800px-Jos_Buttler_2022.png",
     },
     "PAK": {
-        "name": "Babar Azam",
-        "player_png": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Babar_Azam_2023.png/800px-Babar_Azam_2023.png",
+        "name": "Shaheen Afridi",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/66833.png",
+    },
+    "PAKISTAN": {
+        "name": "Shaheen Afridi",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/66833.png",
+    },
+    "SL": {
+        "name": "Kusal Mendis",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/63882.png",
+    },
+    "SRI LANKA": {
+        "name": "Kusal Mendis",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/63882.png",
     },
     "SA": {
         "name": "Temba Bavuma",
@@ -478,6 +490,69 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
     except Exception as exc:
         return None, f"Gemini pose conversion failed: {exc}"
 
+@st.cache_data(show_spinner=False, ttl=86400, max_entries=64)
+def resolve_player_image_url(player_url):
+    """Accept a direct image URL or a public ICC player-profile URL.
+
+    ICC player pages use numeric player IDs, which are also used by ICC's player-image CDN.
+    For other profile pages, fall back to Open Graph / Twitter image metadata.
+    """
+    if not player_url or not isinstance(player_url, str):
+        return None
+    player_url = player_url.strip()
+    if not player_url.lower().startswith(("http://", "https://")):
+        return None
+
+    parsed = urlsplit(player_url)
+    host = (parsed.netloc or "").lower()
+
+    # Direct image links should be fetched as supplied.
+    if host.startswith("images.icc-cricket.com") and "/image/upload/" in parsed.path:
+        return player_url
+    if re.search(r"\.(png|jpe?g|webp|gif)(?:$|\?)", player_url, re.I):
+        return player_url
+
+    # ICC player profile URLs such as /rankings/66833/shaheen-afridi map to player ID 66833.
+    if "icc-cricket.com" in host:
+        player_id_match = re.search(r"/rankings/(\d+)(?:/|$)", parsed.path, re.I)
+        if player_id_match:
+            player_id = player_id_match.group(1)
+            return (
+                "https://images.icc-cricket.com/image/upload/"
+                "t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/"
+                f"{player_id}.png"
+            )
+
+    # Generic webpage fallback: extract its preferred hero / player image.
+    try:
+        response = requests.get(
+            player_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=(2.0, 4.0),
+        )
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        for attr, value in (("property", "og:image"), ("name", "twitter:image"), ("property", "og:image:secure_url")):
+            tag = soup.find("meta", attrs={attr: value})
+            if tag and tag.get("content"):
+                return urljoin(player_url, tag["content"].strip())
+
+        # ICC/other sports pages may expose images with these attributes even without OG tags.
+        for img_tag in soup.find_all("img"):
+            candidate = img_tag.get("src") or img_tag.get("data-src") or img_tag.get("data-lazy-src")
+            alt = str(img_tag.get("alt", "")).lower()
+            if candidate and any(word in alt for word in ("player", "kusal", "mendis", "shaheen", "afridi")):
+                return urljoin(player_url, candidate)
+    except Exception:
+        pass
+
+    # Return the original as a last resort; the fetcher will validate whether it is an image.
+    return player_url
+
+
 def _player_image_from_object(player_obj):
     """Read image URLs from several common ESPNcricinfo JSON shapes."""
     if not isinstance(player_obj, dict):
@@ -685,52 +760,40 @@ RIGHT_PLAYER_Y = CANVAS_HEIGHT - RIGHT_PLAYER_HEIGHT  # 240 px from top
 
 
 def render_player_cutout(canvas, player_img, side):
-    """Fill the fixed left/right frame without stretching or spilling outside it.
+    """Place the entire player cutout in the outer side lane without distortion.
 
-    Use a proportional cover-fit rather than contain-fit. This makes the player's
-    shoulders/body fill more of each side like the reference thumbnail. Any extra
-    height is cropped at the bottom (behind the team banner / canvas edge), and any
-    extra width is cropped toward the center while preserving the outer edge.
-    The final composited player layer is always exactly the frame size.
+    The player's natural aspect ratio is preserved (contain-fit). Left player anchors to
+    the far left; right player anchors to the far right, keeping the centre title clear.
+    Flags and player layers remain separate, and shadows are kept subtle.
     """
     if player_img is None:
         return
 
-    player = get_image_alpha_content(apply_sports_color_grade(player_img))
+    player = get_image_alpha_content(apply_sports_color_grade(player_img)).convert("RGBA")
     if side == "left":
-        target_w, target_h = LEFT_PLAYER_WIDTH, LEFT_PLAYER_HEIGHT
-        x, y = LEFT_PLAYER_X, LEFT_PLAYER_Y
+        max_w, max_h = LEFT_PLAYER_WIDTH, LEFT_PLAYER_HEIGHT
     elif side == "right":
-        target_w, target_h = RIGHT_PLAYER_WIDTH, RIGHT_PLAYER_HEIGHT
-        x, y = RIGHT_PLAYER_X, RIGHT_PLAYER_Y
+        max_w, max_h = RIGHT_PLAYER_WIDTH, RIGHT_PLAYER_HEIGHT
     else:
         raise ValueError("side must be 'left' or 'right'")
 
-    # Cover-fit: fill the whole fixed frame while preserving the photo's aspect ratio.
-    # Unlike contain-fit, this avoids narrow-looking players when the source has a
-    # portrait aspect ratio. Crop overflow only; never stretch the source.
-    scale = max(target_w / max(1, player.width), target_h / max(1, player.height))
-    scaled_w = max(target_w, int(round(player.width * scale)))
-    scaled_h = max(target_h, int(round(player.height * scale)))
-    player = player.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+    # Fit the whole image inside its fixed maximum dimensions; never stretch or crop the head/torso.
+    scale = min(max_w / max(1, player.width), max_h / max(1, player.height))
+    new_w = max(1, int(round(player.width * scale)))
+    new_h = max(1, int(round(player.height * scale)))
+    player = player.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    # Align the top of the head and the outer shoulder edge; crop overflow inward.
-    crop_x = 0 if side == "left" else scaled_w - target_w
-    crop_y = 0
-    player = player.crop((crop_x, crop_y, crop_x + target_w, crop_y + target_h))
+    # Put players on opposite outside edges. The right portrait is explicitly anchored to canvas right.
+    x = 0 if side == "left" else CANVAS_WIDTH - new_w
+    y = CANVAS_HEIGHT - new_h
 
-    # Fixed transparent frame; the player's alpha and shadow cannot escape its bounds.
-    frame_player = player.convert("RGBA")
-    alpha = frame_player.getchannel("A")
+    alpha = player.getchannel("A")
     shadow_alpha = alpha.filter(ImageFilter.MaxFilter(11)).filter(ImageFilter.GaussianBlur(7))
-    shadow_alpha = shadow_alpha.point(lambda value: int(value * 0.16))
-    shadow = Image.new("RGBA", (target_w, target_h), (5, 10, 20, 0))
+    shadow_alpha = shadow_alpha.point(lambda value: int(value * 0.13))
+    shadow = Image.new("RGBA", (new_w, new_h), (5, 10, 20, 0))
     shadow.putalpha(shadow_alpha)
-
-    composite = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
-    composite.alpha_composite(shadow)
-    composite.alpha_composite(frame_player)
-    canvas.alpha_composite(composite, (x, y))
+    canvas.alpha_composite(shadow, (x, y))
+    canvas.alpha_composite(player, (x, y))
 
 
 def draw_pill_badge(draw, bbox, fill_color, border_color=None, border_width=0, radius=60):
@@ -756,7 +819,7 @@ def draw_centered_text(draw, canvas_width, text, y, font, fill, stroke_width=0, 
 
 def draw_brand_pill(draw, channel_text):
     """Smaller top-centre brand pill, keeping attention on players and LIVE text."""
-    font = load_robust_font(88)  # Reduced from 118 to roughly 75% of the previous logo text size.
+    font = load_robust_font(72)  # Compact brand pill: keep it away from players and face area.
     parts = str(channel_text or "PREET SPORTS").strip().split(maxsplit=1)
     if len(parts) == 2:
         first, second = parts[0], parts[1]
@@ -771,10 +834,10 @@ def draw_brand_pill(draw, channel_text):
     total_w = w1 + gap + w2
     total_h = max(h1, h2)
     center_x = CANVAS_WIDTH // 2
-    pad_x, pad_y = 48, 25
+    pad_x, pad_y = 36, 17
     x0 = center_x - total_w // 2 - pad_x
     x1 = center_x + total_w // 2 + pad_x
-    y0, y1 = 48, 48 + total_h + 2 * pad_y
+    y0, y1 = 38, 38 + total_h + 2 * pad_y
     radius = (y1 - y0) // 2
     draw_pill_badge(draw, (x0, y0, x1, y1), (255, 255, 255, 255), (10, 10, 10, 255), 7, radius)
     draw.rounded_rectangle((x0 - 4, y0 - 4, x1 + 4, y1 + 4), radius=radius + 4, outline=(220, 20, 30, 255), width=4)
@@ -933,9 +996,9 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     draw_arrow_banner(draw, CANVAS_WIDTH - banner_w, banner_y, banner_w, banner_h, normalize_team_name(t2_name), font_team, "right")
 
     # Circular flags in the two top corners.
-    flag_size = 360
-    draw_round_flag(overlay, draw, t1_flag, 55, 55, flag_size)
-    draw_round_flag(overlay, draw, t2_flag, CANVAS_WIDTH - flag_size - 55, 55, flag_size)
+    flag_size = 190  # Compact flags placed high enough to avoid covering player hair/foreheads.
+    draw_round_flag(overlay, draw, t1_flag, 28, 22, flag_size)
+    draw_round_flag(overlay, draw, t2_flag, CANVAS_WIDTH - flag_size - 28, 22, flag_size)
 
     return Image.alpha_composite(canvas, overlay)
 
@@ -991,22 +1054,25 @@ with col_left:
                     st.warning(err)
 
     st.subheader("2. Direct Captain Image URLs")
-    st.caption("Use front-facing, high-resolution upper-body photos or transparent PNG/WebP cutouts. This renderer can resize/crop a side-pose photo, but cannot turn the face toward camera without a connected generative image-editing API. Manual front-facing uploads override URL images.")
+    st.caption("Paste a direct image URL or an ICC player-profile URL. ICC profile pages are automatically resolved to their matching player image. For this PAK vs SL preset, Shaheen Afridi is on the left and Kusal Mendis is on the right. Compact flags sit in the top corners; the right player is anchored to the far-right edge.")
     left_captain_url = st.text_input(
-        "Left Captain Image URL",
-        placeholder="Paste the left captain's direct image URL",
+        "Left Captain Image / ICC Profile URL (PAK example)",
+        value="https://www.icc-cricket.com/rankings/66833/shaheen-afridi",
+        placeholder="Paste a direct image or ICC player-profile URL",
         key="left_captain_image_url",
     )
     right_captain_url = st.text_input(
-        "Right Captain Image URL",
-        placeholder="Paste the right captain's direct image URL",
+        "Right Captain Image / ICC Profile URL (SL example)",
+        value="https://www.icc-cricket.com/rankings/63882/kusal-mendis",
+        placeholder="Paste a direct image or ICC player-profile URL",
         key="right_captain_image_url",
     )
     if st.button("🖼️ Fetch / Refresh Captain Images", use_container_width=True):
         attempts, loaded = 0, 0
         if left_captain_url.strip():
             attempts += 1
-            image_left = fetch_online_image(left_captain_url.strip())
+            resolved_left_url = resolve_player_image_url(left_captain_url.strip())
+            image_left = fetch_online_image(resolved_left_url) if resolved_left_url else None
             if image_left is not None:
                 st.session_state.p1_cutout = image_left
                 loaded += 1
@@ -1014,7 +1080,8 @@ with col_left:
                 st.error("Left image could not be downloaded. Check that the URL is public and points directly to an image.")
         if right_captain_url.strip():
             attempts += 1
-            image_right = fetch_online_image(right_captain_url.strip())
+            resolved_right_url = resolve_player_image_url(right_captain_url.strip())
+            image_right = fetch_online_image(resolved_right_url) if resolved_right_url else None
             if image_right is not None:
                 st.session_state.p2_cutout = image_right
                 loaded += 1
@@ -1028,9 +1095,9 @@ with col_left:
     st.subheader("3. Match Details")
     col_t1, col_t2 = st.columns(2)
     with col_t1:
-        team1 = st.text_input("Left Team Name", value=st.session_state.t1_code or "IND", key="team1_name_input").strip().upper()
+        team1 = st.text_input("Left Team Name", value=st.session_state.t1_code or "PAK", key="team1_name_input").strip().upper()
     with col_t2:
-        team2 = st.text_input("Right Team Name", value=st.session_state.t2_code or "WI", key="team2_name_input").strip().upper()
+        team2 = st.text_input("Right Team Name", value=st.session_state.t2_code or "SL", key="team2_name_input").strip().upper()
 
     col_status, col_badge = st.columns(2)
     with col_status:
@@ -1097,6 +1164,25 @@ with col_left:
                 st.success("Right player conversion is ready and will be used in the thumbnail.")
             else:
                 st.error(error)
+
+# Resolve prefilled/profile image URLs on the first page load so the PAK vs SL defaults
+# immediately show Shaheen Afridi (left) and Kusal Mendis (right). The URL/image functions are cached.
+if st.session_state.p1_cutout is None and left_captain_url.strip():
+    try:
+        initial_left_url = resolve_player_image_url(left_captain_url.strip())
+        initial_left_img = fetch_online_image(initial_left_url) if initial_left_url else None
+        if initial_left_img is not None:
+            st.session_state.p1_cutout = initial_left_img
+    except Exception:
+        pass
+if st.session_state.p2_cutout is None and right_captain_url.strip():
+    try:
+        initial_right_url = resolve_player_image_url(right_captain_url.strip())
+        initial_right_img = fetch_online_image(initial_right_url) if initial_right_url else None
+        if initial_right_img is not None:
+            st.session_state.p2_cutout = initial_right_img
+    except Exception:
+        pass
 
 # Resolve player images: uploaded images override fetched URL images; URL images override team fallback.
 c1_info = CAPTAIN_DATABASE.get(normalize_team_name(team1), {})
