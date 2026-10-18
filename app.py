@@ -429,6 +429,9 @@ def remove_background_from_any_image(upload_bytes, filename="image"):
         ],
         "response_format": {"type": "image", "mime_type": "image/jpeg", "image_size": "2K"},
     }
+    # GEMINI_MIME_FIX_2026_10: this endpoint accepts JPEG output only.
+    # Force this immediately before sending so stale/default values cannot leak in.
+    request_body.setdefault("response_format", {})["mime_type"] = "image/jpeg"
     try:
         response = requests.post(
             "https://generativelanguage.googleapis.com/v1beta/interactions",
@@ -549,6 +552,9 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
         },
     }
 
+    # GEMINI_MIME_FIX_2026_10: this endpoint accepts JPEG output only.
+    # Force this immediately before sending so stale/default values cannot leak in.
+    request_body.setdefault("response_format", {})["mime_type"] = "image/jpeg"
     try:
         response = requests.post(
             "https://generativelanguage.googleapis.com/v1beta/interactions",
