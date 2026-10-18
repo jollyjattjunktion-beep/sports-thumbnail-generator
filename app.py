@@ -427,7 +427,7 @@ def remove_background_from_any_image(upload_bytes, filename="image"):
             {"type": "text", "text": prompt},
             {"type": "image", "data": base64.b64encode(source_bytes).decode("ascii"), "mime_type": mime_type},
         ],
-        "response_format": {"type": "image", "mime_type": "image/png", "image_size": "2K"},
+        "response_format": {"type": "image", "mime_type": "image/jpeg", "image_size": "2K"},
     }
     try:
         response = requests.post(
@@ -543,7 +543,7 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
         ],
         "response_format": {
             "type": "image",
-            "mime_type": "image/png",
+            "mime_type": "image/jpeg",
             "aspect_ratio": "3:4",
             "image_size": "2K",
         },
