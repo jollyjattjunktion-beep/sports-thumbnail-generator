@@ -18,6 +18,8 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v4"
+EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
 # Users can override it with their own stadium URL or upload.
@@ -806,6 +808,20 @@ elif c2_info.get("player_png"):
 else:
     p2_final = None
 
+def _looks_like_square_headshot(image):
+    """Detect a likely square squad portrait; this cannot prove the source is a headshot."""
+    if image is None or image.height <= 0:
+        return False
+    ratio = image.width / image.height
+    return 0.88 <= ratio <= 1.12
+
+if _looks_like_square_headshot(p1_final) or _looks_like_square_headshot(p2_final):
+    st.warning(
+        "One or both player sources are nearly square. The app fits each source inside its fixed frame, "
+        "but a cropped headshot does not contain the missing jersey or torso. Use full upper-body, "
+        "preferably transparent PNG/WebP cutouts for the reference look."
+    )
+
 # Explicit background upload wins, then custom URL, then default real stadium photo.
 if bg_file:
     bg_final = Image.open(bg_file).convert("RGBA")
@@ -832,6 +848,9 @@ def _image_cache_key(image):
 
 
 render_signature = (
+    RENDER_PIPELINE_VERSION,
+    CANVAS_WIDTH,
+    CANVAS_HEIGHT,
     normalize_team_name(team1),
     normalize_team_name(team2),
     str(channel_title),
@@ -858,6 +877,13 @@ if st.session_state.get("_thumbnail_signature") != render_signature:
             t1_flag=flag1,
             t2_flag=flag2,
         )
+        # Hard guard: the downloadable file must always be exactly 3840 x 2160.
+        # The render pipeline itself uses this canvas natively; this also protects against stale/modified renderers.
+        if rendered.size != EXPECTED_OUTPUT_SIZE:
+            rendered = rendered.resize(EXPECTED_OUTPUT_SIZE, Image.Resampling.LANCZOS)
+        if rendered.size != (3840, 2160):
+            raise RuntimeError(f"Unexpected thumbnail size: {rendered.size}; expected 3840 x 2160")
+
         output_buffer = io.BytesIO()
         # Fast compression keeps generation quick; PNG remains lossless.
         rendered.save(output_buffer, format="PNG", optimize=False, compress_level=1)
@@ -873,7 +899,9 @@ with col_right:
     # Send a lightweight preview to the browser; the download remains full 4K.
     preview_image = result.resize((1280, 720), Image.Resampling.LANCZOS)
     st.image(preview_image, use_container_width=True)
-    st.caption("Preview shown at 1280 × 720 for faster loading. Download remains 3840 × 2160 PNG.")
+    st.caption(
+        f"Preview: 1280 × 720 px for speed. Download: {result.width} × {result.height} px PNG (4K UHD)."
+    )
 
     st.download_button(
         label="⬇️ Download 4K Thumbnail (3840 × 2160 PNG)",
