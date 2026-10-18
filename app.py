@@ -20,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v9-icc-profile-fetch-small-flags-outer-anchored-players"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v11-generic-background-removal"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -37,6 +37,8 @@ TEAM_FLAG_DATABASE = {
     "IND": "https://flagcdn.com/w320/in.png",
     "INDIA": "https://flagcdn.com/w320/in.png",
     "IND WOMEN": "https://flagcdn.com/w320/in.png",
+    "IND-W": "https://flagcdn.com/w320/in.png",
+    "IND W": "https://flagcdn.com/w320/in.png",
     "INDIA WOMEN": "https://flagcdn.com/w320/in.png",
     "WI": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
     "WEST INDIES": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
@@ -67,6 +69,9 @@ TEAM_FLAG_DATABASE = {
     "IRELAND": "https://flagcdn.com/w320/ie.png",
     "ZIM": "https://flagcdn.com/w320/zw.png",
     "ZIMBABWE": "https://flagcdn.com/w320/zw.png",
+    "ZIM-W": "https://flagcdn.com/w320/zw.png",
+    "ZIM W": "https://flagcdn.com/w320/zw.png",
+    "ZIMBABWE WOMEN": "https://flagcdn.com/w320/zw.png",
     "NEP": "https://flagcdn.com/w320/np.png",
     "NEPAL": "https://flagcdn.com/w320/np.png",
     "USA": "https://flagcdn.com/w320/us.png",
@@ -365,6 +370,111 @@ def _remove_magenta_chroma_background(image):
     keyed = Image.fromarray(alpha_array, mode="L").filter(ImageFilter.GaussianBlur(0.45))
     image.putalpha(keyed)
     return image
+
+
+def remove_background_from_any_image(upload_bytes, filename="image"):
+    """Use Gemini image editing to isolate the main foreground subject on transparency.
+
+    Works with ordinary uploaded photos, products, people, pets, objects and logos.
+    Gemini is asked for a uniform magenta backing, which is converted to alpha locally.
+    Returns (PIL.Image in RGBA mode or None, error message or None).
+    """
+    api_key = get_gemini_api_key()
+    if not api_key:
+        return None, (
+            "Background removal is not configured. Add GEMINI_API_KEY in Render → Environment. "
+            "Gemini API calls may be billed separately from your Gemini Pro subscription."
+        )
+
+    try:
+        with Image.open(io.BytesIO(upload_bytes)) as opened:
+            opened.load()
+            source = opened.convert("RGBA")
+            if max(source.size) > 1600:
+                scale = 1600 / max(source.size)
+                source = source.resize(
+                    (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
+                    Image.Resampling.LANCZOS,
+                )
+            has_alpha = source.getchannel("A").getextrema()[0] < 250
+            source_buffer = io.BytesIO()
+            if has_alpha:
+                source.save(source_buffer, format="PNG", optimize=False, compress_level=3)
+                mime_type = "image/png"
+            else:
+                source.convert("RGB").save(source_buffer, format="JPEG", quality=92, optimize=True)
+                mime_type = "image/jpeg"
+            source_bytes = source_buffer.getvalue()
+    except Exception as exc:
+        return None, f"Could not read the uploaded image: {exc}"
+
+    prompt = (
+        "Perform a precise background-removal edit on the supplied image. Identify and preserve the main "
+        "foreground subject or object exactly as shown, including fine edges such as hair, fur, feathers, "
+        "transparent product edges, and small details. Remove the entire original background, including "
+        "scenery, room, sky, floor, shadows that belong to the background, and unrelated objects. Do not "
+        "redraw, beautify, recolor, reshape, crop, or replace the main subject. Preserve its identity, pose, "
+        "proportions, clothing, logos, text, and colors. If there are multiple clearly intended foreground "
+        "subjects, keep all of them. Keep the subject fully inside the image with a small margin. Do not add "
+        "new objects, text, borders, or watermarks. For reliable background extraction, place the preserved "
+        "subject on a perfectly flat, uniform pure magenta background RGB(255, 0, 255), edge to edge; no "
+        "gradient, texture, scenery, cast shadow, or magenta rim light. Magenta must only appear in empty "
+        "background pixels, never on the subject. Return one edited image."
+    )
+    request_body = {
+        "model": os.environ.get("GEMINI_IMAGE_MODEL", "gemini-nano-banana-2.1").strip(),
+        "input": [
+            {"type": "text", "text": prompt},
+            {"type": "image", "data": base64.b64encode(source_bytes).decode("ascii"), "mime_type": mime_type},
+        ],
+        "response_format": {"type": "image", "mime_type": "image/png", "image_size": "2K"},
+    }
+    try:
+        response = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+            json=request_body,
+            timeout=(15, 240),
+        )
+        if response.status_code >= 400:
+            detail = ""
+            try:
+                err_json = response.json()
+                err = err_json.get("error", {}) if isinstance(err_json, dict) else {}
+                detail = err.get("message", "") if isinstance(err, dict) else str(err)
+            except Exception:
+                detail = response.text[:500]
+            if response.status_code in (401, 403):
+                return None, f"Gemini API key or permissions rejected (HTTP {response.status_code}). {detail}".strip()
+            if response.status_code == 429:
+                return None, f"Gemini API quota/rate limit reached (HTTP 429). Check AI Studio billing/usage. {detail}".strip()
+            return None, f"Gemini background removal failed (HTTP {response.status_code}). {detail}".strip()
+
+        payload = response.json()
+        image_block = _find_gemini_image_block(payload)
+        if not image_block or not image_block.get("data"):
+            return None, "Gemini returned no image. Try a clearer image or another file format."
+        result_bytes = base64.b64decode(image_block["data"])
+        with Image.open(io.BytesIO(result_bytes)) as output_image:
+            output_image.load()
+            result = output_image.convert("RGBA")
+        result = _remove_magenta_chroma_background(result)
+        # Trim only transparent outside margins; leave a small safety margin around the subject.
+        alpha = result.getchannel("A")
+        bbox = alpha.getbbox()
+        if bbox:
+            subject = result.crop(bbox)
+            pad = max(8, int(max(subject.size) * 0.015))
+            trimmed = Image.new("RGBA", (subject.width + 2 * pad, subject.height + 2 * pad), (0, 0, 0, 0))
+            trimmed.alpha_composite(subject, (pad, pad))
+            result = trimmed
+        return result, None
+    except requests.Timeout:
+        return None, "Gemini background removal timed out. Try a smaller image or retry."
+    except requests.RequestException as exc:
+        return None, f"Could not reach the Gemini image-edit API: {exc}"
+    except Exception as exc:
+        return None, f"Background removal failed: {exc}"
 
 
 def convert_player_to_front_facing(upload_bytes, filename, side):
@@ -1054,16 +1164,16 @@ with col_left:
                     st.warning(err)
 
     st.subheader("2. Direct Captain Image URLs")
-    st.caption("Paste a direct image URL or an ICC player-profile URL. ICC profile pages are automatically resolved to their matching player image. For this PAK vs SL preset, Shaheen Afridi is on the left and Kusal Mendis is on the right. Compact flags sit in the top corners; the right player is anchored to the far-right edge.")
+    st.caption("Paste a direct image URL or an ICC player-profile URL. ICC profile pages are automatically resolved to their matching player image. For this IND-W vs ZIM-W preset, paste the desired player profile or direct image URLs below. Compact flags sit in the top corners; the right player is anchored to the far-right edge.")
     left_captain_url = st.text_input(
-        "Left Captain Image / ICC Profile URL (PAK example)",
-        value="https://www.icc-cricket.com/rankings/66833/shaheen-afridi",
+        "Left Captain Image / ICC Profile URL (India Women)",
+        value="",
         placeholder="Paste a direct image or ICC player-profile URL",
         key="left_captain_image_url",
     )
     right_captain_url = st.text_input(
-        "Right Captain Image / ICC Profile URL (SL example)",
-        value="https://www.icc-cricket.com/rankings/63882/kusal-mendis",
+        "Right Captain Image / ICC Profile URL (Zimbabwe Women)",
+        value="",
         placeholder="Paste a direct image or ICC player-profile URL",
         key="right_captain_image_url",
     )
@@ -1095,9 +1205,9 @@ with col_left:
     st.subheader("3. Match Details")
     col_t1, col_t2 = st.columns(2)
     with col_t1:
-        team1 = st.text_input("Left Team Name", value=st.session_state.t1_code or "PAK", key="team1_name_input").strip().upper()
+        team1 = st.text_input("Left Team Name", value=st.session_state.t1_code or "IND-W", key="team1_name_input").strip().upper()
     with col_t2:
-        team2 = st.text_input("Right Team Name", value=st.session_state.t2_code or "SL", key="team2_name_input").strip().upper()
+        team2 = st.text_input("Right Team Name", value=st.session_state.t2_code or "ZIM-W", key="team2_name_input").strip().upper()
 
     col_status, col_badge = st.columns(2)
     with col_status:
@@ -1107,7 +1217,51 @@ with col_left:
     commentary_text = st.text_input("Box below T20 badge", value="HINDI COMMENTARY", key="commentary_text_input")
     channel_title = st.text_input("Channel Brand", value="PREET SPORTS", key="channel_title_input")
 
-    st.subheader("4. Background (optional override)")
+    st.subheader("4. Remove Background from Any Image")
+    st.caption(
+        "Upload a photo, person, product, pet, object, or logo. Gemini attempts to isolate the foreground "
+        "and return a transparent PNG. Requires GEMINI_API_KEY in Render Environment; API usage may be billed separately."
+    )
+    any_image_upload = st.file_uploader(
+        "Choose any image to remove its background",
+        type=["png", "jpg", "jpeg", "webp"],
+        key="generic_background_removal_upload",
+    )
+    if st.button("✂️ Remove Background", type="primary", use_container_width=True, key="remove_any_background_button"):
+        if not any_image_upload:
+            st.warning("Upload an image first.")
+        else:
+            with st.spinner("Gemini is removing the background. This may take a little while…"):
+                transparent_result, bg_remove_error = remove_background_from_any_image(
+                    any_image_upload.getvalue(), any_image_upload.name
+                )
+            if transparent_result is not None:
+                st.session_state["generic_bg_removed_png"] = transparent_result
+                st.session_state["generic_bg_removed_name"] = any_image_upload.name
+                st.success("Background removed. Preview and download your transparent PNG below.")
+            else:
+                st.error(bg_remove_error or "Could not remove the background.")
+
+    if st.session_state.get("generic_bg_removed_png") is not None:
+        removed_image = st.session_state["generic_bg_removed_png"]
+        source_name = st.session_state.get("generic_bg_removed_name", "image")
+        preview_col, download_col = st.columns([1, 1])
+        with preview_col:
+            st.image(removed_image, caption="Background removed", use_container_width=True)
+        with download_col:
+            png_buffer = io.BytesIO()
+            removed_image.save(png_buffer, format="PNG", optimize=False)
+            base_name = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(source_name)[0]).strip("_") or "image"
+            st.download_button(
+                "⬇️ Download Transparent PNG",
+                data=png_buffer.getvalue(),
+                file_name=f"{base_name}_background_removed.png",
+                mime="image/png",
+                use_container_width=True,
+                key="download_generic_background_removed",
+            )
+
+    st.subheader("5. Background (optional override)")
     stadium_url = st.text_input(
         "Custom Stadium Background URL",
         value="",
@@ -1115,7 +1269,7 @@ with col_left:
         key="stadium_background_url",
     )
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
-    st.subheader("5. Upload Player Photos — AI Front-Facing Pose")
+    st.subheader("6. Upload Player Photos — AI Front-Facing Pose")
     st.caption(
         "Upload a side-facing photo and press Convert. Gemini Nano Banana will attempt to turn the head and shoulders toward camera. "
         "The app requests a magenta background and removes it to create a player cutout. Add GEMINI_API_KEY in Render Environment; "
