@@ -20,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v11-generic-background-removal"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v12-team-color-panels-watermarks"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -429,9 +429,6 @@ def remove_background_from_any_image(upload_bytes, filename="image"):
         ],
         "response_format": {"type": "image", "mime_type": "image/jpeg", "image_size": "2K"},
     }
-    # GEMINI_MIME_FIX_2026_10: this endpoint accepts JPEG output only.
-    # Force this immediately before sending so stale/default values cannot leak in.
-    request_body.setdefault("response_format", {})["mime_type"] = "image/jpeg"
     try:
         response = requests.post(
             "https://generativelanguage.googleapis.com/v1beta/interactions",
@@ -552,9 +549,6 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
         },
     }
 
-    # GEMINI_MIME_FIX_2026_10: this endpoint accepts JPEG output only.
-    # Force this immediately before sending so stale/default values cannot leak in.
-    request_body.setdefault("response_format", {})["mime_type"] = "image/jpeg"
     try:
         response = requests.post(
             "https://generativelanguage.googleapis.com/v1beta/interactions",
@@ -1002,6 +996,123 @@ def draw_round_flag(overlay, draw, flag_image, x, y, size):
     draw.ellipse((x - 7, y - 7, x + size + 7, y + size + 7), outline=(255, 255, 255, 255), width=14)
 
 
+# Official-ish broadcast palettes chosen by common team labels. These are graphic
+# theme colours, not claims about a team's official brand specification.
+TEAM_COLOR_PALETTES = {
+    "IND": ((20, 83, 225), (255, 132, 30), (5, 35, 112)),
+    "INDIA": ((20, 83, 225), (255, 132, 30), (5, 35, 112)),
+    "IND WOMEN": ((20, 83, 225), (255, 132, 30), (5, 35, 112)),
+    "IND-W": ((20, 83, 225), (255, 132, 30), (5, 35, 112)),
+    "IND W": ((20, 83, 225), (255, 132, 30), (5, 35, 112)),
+    "PAK": ((0, 111, 67), (190, 245, 120), (0, 53, 35)),
+    "PAKISTAN": ((0, 111, 67), (190, 245, 120), (0, 53, 35)),
+    "SL": ((126, 20, 48), (255, 190, 20), (68, 8, 28)),
+    "SRI LANKA": ((126, 20, 48), (255, 190, 20), (68, 8, 28)),
+    "AUS": ((0, 70, 170), (255, 190, 0), (0, 28, 83)),
+    "AUSTRALIA": ((0, 70, 170), (255, 190, 0), (0, 28, 83)),
+    "AUS WOMEN": ((0, 70, 170), (255, 190, 0), (0, 28, 83)),
+    "NZ": ((16, 28, 48), (0, 184, 220), (3, 9, 20)),
+    "NEW ZEALAND": ((16, 28, 48), (0, 184, 220), (3, 9, 20)),
+    "NZ WOMEN": ((16, 28, 48), (0, 184, 220), (3, 9, 20)),
+    "WI": ((126, 10, 53), (255, 205, 20), (60, 4, 31)),
+    "WEST INDIES": ((126, 10, 53), (255, 205, 20), (60, 4, 31)),
+    "ENG": ((15, 49, 112), (225, 30, 51), (4, 18, 55)),
+    "ENGLAND": ((15, 49, 112), (225, 30, 51), (4, 18, 55)),
+    "ZIM": ((0, 112, 75), (255, 203, 0), (0, 56, 38)),
+    "ZIMBABWE": ((0, 112, 75), (255, 203, 0), (0, 56, 38)),
+    "ZIM-W": ((0, 112, 75), (255, 203, 0), (0, 56, 38)),
+    "ZIM W": ((0, 112, 75), (255, 203, 0), (0, 56, 38)),
+    "SA": ((0, 105, 76), (255, 205, 0), (0, 43, 34)),
+    "SOUTH AFRICA": ((0, 105, 76), (255, 205, 0), (0, 43, 34)),
+    "BAN": ((0, 106, 78), (225, 30, 55), (0, 48, 36)),
+    "BANGLADESH": ((0, 106, 78), (225, 30, 55), (0, 48, 36)),
+    "AFG": ((25, 75, 160), (210, 35, 50), (8, 35, 90)),
+    "AFGHANISTAN": ((25, 75, 160), (210, 35, 50), (8, 35, 90)),
+}
+
+
+def team_palette(team_name):
+    """Return (main, accent, shadow) colors for a team label."""
+    key = normalize_team_name(team_name)
+    palette = TEAM_COLOR_PALETTES.get(key)
+    if palette:
+        return palette
+    key = key.replace(" WOMEN", "").replace(" MEN", "")
+    return TEAM_COLOR_PALETTES.get(key, ((24, 77, 185), (255, 145, 25), (5, 25, 75)))
+
+
+def draw_team_flag_watermark(canvas, flag_image, x, y, size, main_color, accent_color, opacity=225):
+    """Draw one circular team badge behind the portrait, preserving the whole flag aspect ratio."""
+    badge = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(badge)
+    bd.ellipse((3, 3, size - 4, size - 4), fill=(*main_color, min(240, opacity)),
+               outline=(255, 255, 255, 245), width=18)
+    bd.ellipse((17, 17, size - 18, size - 18), outline=(*accent_color, 255), width=9)
+
+    if flag_image is not None:
+        flag = flag_image.convert("RGBA")
+        # Contain-fit the full rectangular flag on the badge; don't crop away its identifying details.
+        max_flag = int(size * 0.72)
+        scale = min(max_flag / max(1, flag.width), max_flag / max(1, flag.height))
+        flag = flag.resize((max(1, int(flag.width * scale)), max(1, int(flag.height * scale))), Image.Resampling.LANCZOS)
+        fa = flag.getchannel("A").point(lambda value: int(value * opacity / 255))
+        flag.putalpha(fa)
+        fx = (size - flag.width) // 2
+        fy = (size - flag.height) // 2
+        badge.alpha_composite(flag, (fx, fy))
+
+    # Outer rings keep a clear logo edge when it sits over the tinted team panel.
+    bd = ImageDraw.Draw(badge)
+    bd.ellipse((3, 3, size - 4, size - 4), outline=(255, 255, 255, 250), width=18)
+    bd.ellipse((17, 17, size - 18, size - 18), outline=(*accent_color, 255), width=8)
+    canvas.alpha_composite(badge, (x, y))
+
+
+def draw_team_color_backplates(canvas, team1_name, team2_name, flag1, flag2):
+    """Add diagonal team-colour panels, accent slashes and flag watermarks behind players.
+
+    The stadium remains visible through the colour panels and across the central pitch,
+    mimicking compact team-colour YouTube live thumbnails rather than using a flat backdrop.
+    """
+    left_main, left_accent, left_dark = team_palette(team1_name)
+    right_main, right_accent, right_dark = team_palette(team2_name)
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    w, h = canvas.size
+    panel_bottom = int(h * 0.86)
+    left_inner_x = int(w * 0.34)
+    left_outer_diag_x = int(w * 0.435)
+    right_inner_x = int(w * 0.66)
+    right_outer_diag_x = int(w * 0.565)
+
+    # Main tinted side panels.
+    d.polygon([(0, 0), (left_inner_x, 0), (left_outer_diag_x, panel_bottom), (0, panel_bottom)],
+              fill=(*left_main, 178))
+    d.polygon([(w, 0), (w - left_inner_x, 0), (w - left_outer_diag_x, panel_bottom), (w, panel_bottom)],
+              fill=(*right_main, 178))
+
+    # Rich darker insets add depth behind the player portraits.
+    d.polygon([(0, 0), (int(w * .19), 0), (int(w * .29), panel_bottom), (0, panel_bottom)],
+              fill=(*left_dark, 95))
+    d.polygon([(w, 0), (int(w * .81), 0), (int(w * .71), panel_bottom), (w, panel_bottom)],
+              fill=(*right_dark, 95))
+
+    # Diagonal team-colour slashes, inspired by the reference channel's split panels.
+    d.polygon([(int(w * .245), 0), (int(w * .276), 0), (int(w * .356), panel_bottom),
+               (int(w * .325), panel_bottom)], fill=(*left_accent, 238))
+    d.polygon([(int(w * .755), 0), (int(w * .724), 0), (int(w * .644), panel_bottom),
+               (int(w * .675), panel_bottom)], fill=(*right_accent, 238))
+    # Thin white separation pinstripes add sharp thumbnail contrast.
+    d.line([(int(w * .282), 0), (int(w * .362), panel_bottom)], fill=(255, 255, 255, 155), width=9)
+    d.line([(int(w * .718), 0), (int(w * .638), panel_bottom)], fill=(255, 255, 255, 155), width=9)
+    canvas.alpha_composite(layer)
+
+    # Large faded team logos/flags sit BEHIND the players. Player cutouts are composited next.
+    watermark_size = 430
+    draw_team_flag_watermark(canvas, flag1, 34, 72, watermark_size, left_main, left_accent, opacity=225)
+    draw_team_flag_watermark(canvas, flag2, w - watermark_size - 34, 72, watermark_size, right_main, right_accent, opacity=225)
+
+
 def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
                        t1_name, t2_name, t1_flag, t2_flag, commentary_text="HINDI COMMENTARY"):
     # Real stadium first; use a hand-drawn stadium only if the remote image is unavailable.
@@ -1021,7 +1132,10 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     vdraw.rectangle((0, int(CANVAS_HEIGHT * 0.79), CANVAS_WIDTH, CANVAS_HEIGHT), fill=(0, 0, 0, 48))
     canvas = Image.alpha_composite(canvas, vignette)
 
-    # Captain cutouts are layered above the stadium and below the text.
+    # Reference channel style: diagonal team-colour panels and muted team logos BEHIND players.
+    draw_team_color_backplates(canvas, t1_name, t2_name, t1_flag, t2_flag)
+
+    # Captain cutouts are layered above the stadium and team panels, below the text.
     render_player_cutout(canvas, p1_img, "left")
     render_player_cutout(canvas, p2_img, "right")
 
@@ -1111,10 +1225,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     draw_arrow_banner(draw, 0, banner_y, banner_w, banner_h, normalize_team_name(t1_name), font_team, "left")
     draw_arrow_banner(draw, CANVAS_WIDTH - banner_w, banner_y, banner_w, banner_h, normalize_team_name(t2_name), font_team, "right")
 
-    # Circular flags in the two top corners.
-    flag_size = 190  # Compact flags placed high enough to avoid covering player hair/foreheads.
-    draw_round_flag(overlay, draw, t1_flag, 28, 22, flag_size)
-    draw_round_flag(overlay, draw, t2_flag, CANVAS_WIDTH - flag_size - 28, 22, flag_size)
+    # Team flag/logo badges are deliberately behind the portraits, not on top of the players' heads.
 
     return Image.alpha_composite(canvas, overlay)
 
@@ -1123,7 +1234,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
 # STREAMLIT UI
 # =========================================================
 st.title("🏏 PREET SPORTS — 4K Cricket Thumbnail Studio")
-st.caption("Broadcast-style layout inspired by cricket live thumbnails: compact brand, large player portraits, bold LIVE / format badges, and clean bottom team banners. Export: 3840 × 2160 PNG.")
+st.caption("Team-colour diagonal panels, faded team-flag watermarks behind player cutouts, compact brand, bold LIVE / format badges and high-contrast nameplates. Export: 3840 × 2160 PNG.")
 
 for key in ["p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front", "p1_ai_source_hash", "p2_ai_source_hash", "t1_code", "t2_code", "auto_bg"]:
     if key not in st.session_state:
