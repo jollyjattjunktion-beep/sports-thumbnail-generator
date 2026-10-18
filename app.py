@@ -1,4 +1,5 @@
 import io
+import base64
 import hashlib
 import json
 import os
@@ -18,7 +19,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v6-hindi-commentary"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v7-ai-front-pose-logo-reduced"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -266,6 +267,113 @@ def fetch_online_image(url):
             continue
     return best_image
 
+
+
+def get_openai_api_key():
+    """Read the OpenAI key from Render environment variables or Streamlit secrets."""
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        return str(st.secrets.get("OPENAI_API_KEY", "")).strip()
+    except Exception:
+        return ""
+
+
+def convert_player_to_front_facing(upload_bytes, filename, side):
+    """Use the OpenAI image-edit API to create a front-facing transparent player cutout.
+
+    This call is intentionally user-triggered because image-edit requests can incur API charges.
+    Returns (PIL.Image or None, error message or None).
+    """
+    api_key = get_openai_api_key()
+    if not api_key:
+        return None, (
+            "AI pose conversion is not configured. Add OPENAI_API_KEY under Render → Environment, "
+            "then redeploy. The image-edit API may incur usage charges."
+        )
+
+    try:
+        with Image.open(io.BytesIO(upload_bytes)) as source:
+            source.load()
+            source = source.convert("RGBA")
+            # Keep requests fast and comfortably below the image API upload limit.
+            max_edge = 2048
+            if max(source.size) > max_edge:
+                scale = max_edge / max(source.size)
+                source = source.resize(
+                    (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
+                    Image.Resampling.LANCZOS,
+                )
+            source_buffer = io.BytesIO()
+            source.save(source_buffer, format="PNG", optimize=False, compress_level=3)
+            source_bytes = source_buffer.getvalue()
+    except Exception as exc:
+        return None, f"Could not read the uploaded photo: {exc}"
+
+    side_label = "left" if side == "left" else "right"
+    prompt = (
+        "Edit the attached real cricket-player photo for a professional live-match thumbnail. "
+        "Change the pose to a natural FRONT-FACING, straight-on portrait, looking directly at the camera. "
+        "Turn the face and head toward the camera, show both eyes clearly, and rotate the shoulders naturally "
+        "so they are nearly square to the camera. Keep the same person recognisable and preserve their face, "
+        "skin tone, hairstyle, age, and the original team's jersey colors and overall uniform style. "
+        "Frame the person from the top of the head to around the waist or mid-torso, with both shoulders visible. "
+        "Create a clean transparent background and natural hair/jersey edges suitable for compositing on a cricket stadium. "
+        "Photorealistic editorial sports photography, natural anatomy, authentic fabric detail. "
+        "Do not add text, graphics, flags, logos that were not present, extra people, hands near the face, "
+        "watermarks, or a background scene. Do not make a side profile or three-quarter pose. "
+        "Keep the person centred with a little transparent margin around the hair and shoulders. "
+        f"This will be placed on the {side_label} side of a 16:9 cricket thumbnail. Return only the edited cutout."
+    )
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    files = {"image": ("player_source.png", source_bytes, "image/png")}
+    data = {
+        "model": "gpt-image-2",
+        "prompt": prompt,
+        "size": "auto",
+        "quality": "high",
+        "background": "transparent",
+        "output_format": "png",
+    }
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/images/edits",
+            headers=headers,
+            files=files,
+            data=data,
+            timeout=(15, 240),
+        )
+        if response.status_code >= 400:
+            detail = ""
+            try:
+                detail = response.json().get("error", {}).get("message", "")
+            except Exception:
+                detail = response.text[:400]
+            return None, f"AI image editing failed (HTTP {response.status_code}). {detail}".strip()
+        payload = response.json()
+        results = payload.get("data") or []
+        if not results:
+            return None, "The image-edit service returned no image. Please try another photo."
+        first = results[0]
+        if first.get("b64_json"):
+            image_bytes = base64.b64decode(first["b64_json"])
+        elif first.get("url"):
+            image_response = requests.get(first["url"], timeout=45)
+            image_response.raise_for_status()
+            image_bytes = image_response.content
+        else:
+            return None, "The image-edit service returned an unrecognised image response."
+        with Image.open(io.BytesIO(image_bytes)) as output_image:
+            output_image.load()
+            return output_image.convert("RGBA"), None
+    except requests.Timeout:
+        return None, "AI pose conversion timed out. Try a smaller source photo or retry later."
+    except requests.RequestException as exc:
+        return None, f"Could not reach the AI image-edit service: {exc}"
+    except Exception as exc:
+        return None, f"AI pose conversion failed: {exc}"
 
 def _player_image_from_object(player_obj):
     """Read image URLs from several common ESPNcricinfo JSON shapes."""
@@ -544,7 +652,8 @@ def draw_centered_text(draw, canvas_width, text, y, font, fill, stroke_width=0, 
 
 
 def draw_brand_pill(draw, channel_text):
-    font = load_robust_font(118)
+    """Smaller top-centre brand pill, keeping attention on players and LIVE text."""
+    font = load_robust_font(88)  # Reduced from 118 to roughly 75% of the previous logo text size.
     parts = str(channel_text or "PREET SPORTS").strip().split(maxsplit=1)
     if len(parts) == 2:
         first, second = parts[0], parts[1]
@@ -554,20 +663,23 @@ def draw_brand_pill(draw, channel_text):
     bbox2 = draw.textbbox((0, 0), second, font=font) if second else (0, 0, 0, 0)
     w1, h1 = bbox1[2] - bbox1[0], bbox1[3] - bbox1[1]
     w2 = bbox2[2] - bbox2[0]
-    total_w = w1 + (28 if second else 0) + w2
-    total_h = max(h1, bbox2[3] - bbox2[1] if second else h1)
+    h2 = bbox2[3] - bbox2[1] if second else h1
+    gap = 18 if second else 0
+    total_w = w1 + gap + w2
+    total_h = max(h1, h2)
     center_x = CANVAS_WIDTH // 2
-    x0 = center_x - total_w // 2 - 70
-    x1 = center_x + total_w // 2 + 70
-    y0, y1 = 55, 55 + total_h + 75
-    draw_pill_badge(draw, (x0, y0, x1, y1), (255, 255, 255, 255), (10, 10, 10, 255), 10, 100)
-    # Thin red outside accent
-    draw.rounded_rectangle((x0 - 5, y0 - 5, x1 + 5, y1 + 5), radius=105, outline=(220, 20, 30, 255), width=5)
+    pad_x, pad_y = 48, 25
+    x0 = center_x - total_w // 2 - pad_x
+    x1 = center_x + total_w // 2 + pad_x
+    y0, y1 = 48, 48 + total_h + 2 * pad_y
+    radius = (y1 - y0) // 2
+    draw_pill_badge(draw, (x0, y0, x1, y1), (255, 255, 255, 255), (10, 10, 10, 255), 7, radius)
+    draw.rounded_rectangle((x0 - 4, y0 - 4, x1 + 4, y1 + 4), radius=radius + 4, outline=(220, 20, 30, 255), width=4)
     text_x = center_x - total_w // 2
-    text_y = y0 + (total_h + 75 - total_h) // 2 - bbox1[1]
+    text_y = y0 + (y1 - y0 - total_h) // 2 - bbox1[1]
     draw.text((text_x, text_y), first, font=font, fill=(7, 7, 7, 255))
     if second:
-        draw.text((text_x + w1 + 28, text_y), second, font=font, fill=(224, 18, 27, 255))
+        draw.text((text_x + w1 + gap, text_y), second, font=font, fill=(224, 18, 27, 255))
 
 
 def draw_arrow_banner(draw, x, y, width, height, text, font, side):
@@ -729,9 +841,9 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
 # STREAMLIT UI
 # =========================================================
 st.title("🏏 PREET SPORTS — 4K Cricket Thumbnail Studio")
-st.caption("Reference-style output: left player 1640 × 1960 px at (0, 200); right player 1600 × 1920 px at (2240, 240); canvas 3840 × 2160 px.")
+st.caption("Broadcast-style layout inspired by cricket live thumbnails: compact brand, large player portraits, bold LIVE / format badges, and clean bottom team banners. Export: 3840 × 2160 PNG.")
 
-for key in ["p1_cutout", "p2_cutout", "t1_code", "t2_code", "auto_bg"]:
+for key in ["p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front", "p1_ai_source_hash", "p2_ai_source_hash", "t1_code", "t2_code", "auto_bg"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -833,18 +945,88 @@ with col_left:
         key="stadium_background_url",
     )
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
+    st.subheader("5. Upload Player Photos — AI Front-Facing Pose")
+    st.caption(
+        "Upload a side-facing photo and press Convert. The AI editor will attempt to turn the head and shoulders toward camera, "
+        "preserve the player's appearance, and produce a transparent cutout. Add OPENAI_API_KEY in Render Environment first; "
+        "AI edits can incur API charges and may not perfectly preserve fine uniform details."
+    )
     col_up1, col_up2 = st.columns(2)
     with col_up1:
-        custom_p1 = st.file_uploader("Manual left cutout (PNG/WebP)", type=["png", "webp"], key="manual_left_player")
+        custom_p1 = st.file_uploader(
+            "Left player source photo (PNG/JPG/WebP)",
+            type=["png", "jpg", "jpeg", "webp"],
+            key="manual_left_player",
+        )
+        convert_left_clicked = st.button("✨ Convert LEFT to front-facing", use_container_width=True, key="convert_left_front")
     with col_up2:
-        custom_p2 = st.file_uploader("Manual right cutout (PNG/WebP)", type=["png", "webp"], key="manual_right_player")
+        custom_p2 = st.file_uploader(
+            "Right player source photo (PNG/JPG/WebP)",
+            type=["png", "jpg", "jpeg", "webp"],
+            key="manual_right_player",
+        )
+        convert_right_clicked = st.button("✨ Convert RIGHT to front-facing", use_container_width=True, key="convert_right_front")
+
+    if convert_left_clicked:
+        if not custom_p1:
+            st.warning("Upload a left-player photo first.")
+        else:
+            source_bytes = custom_p1.getvalue()
+            with st.spinner("AI is turning the left player toward the camera. This may take a little while…"):
+                edited, error = convert_player_to_front_facing(source_bytes, custom_p1.name, "left")
+            if edited is not None:
+                st.session_state.p1_ai_front = edited
+                st.session_state.p1_ai_source_hash = hashlib.sha1(source_bytes).hexdigest()
+                st.success("Left player conversion is ready and will be used in the thumbnail.")
+            else:
+                st.error(error)
+
+    if convert_right_clicked:
+        if not custom_p2:
+            st.warning("Upload a right-player photo first.")
+        else:
+            source_bytes = custom_p2.getvalue()
+            with st.spinner("AI is turning the right player toward the camera. This may take a little while…"):
+                edited, error = convert_player_to_front_facing(source_bytes, custom_p2.name, "right")
+            if edited is not None:
+                st.session_state.p2_ai_front = edited
+                st.session_state.p2_ai_source_hash = hashlib.sha1(source_bytes).hexdigest()
+                st.success("Right player conversion is ready and will be used in the thumbnail.")
+            else:
+                st.error(error)
 
 # Resolve player images: uploaded images override fetched URL images; URL images override team fallback.
 c1_info = CAPTAIN_DATABASE.get(normalize_team_name(team1), {})
 c2_info = CAPTAIN_DATABASE.get(normalize_team_name(team2), {})
 
-if custom_p1:
-    p1_final = Image.open(custom_p1).convert("RGBA")
+def _uploaded_file_sha1(uploaded_file):
+    return hashlib.sha1(uploaded_file.getvalue()).hexdigest() if uploaded_file else None
+
+
+def _uploaded_file_is_transparent_cutout(uploaded_file):
+    """True only if the uploaded file has real transparency, not merely an RGBA mode."""
+    if not uploaded_file:
+        return False
+    try:
+        with Image.open(io.BytesIO(uploaded_file.getvalue())) as candidate:
+            if "A" not in candidate.getbands():
+                return False
+            return candidate.getchannel("A").getextrema()[0] < 250
+    except Exception:
+        return False
+
+
+left_upload_hash = _uploaded_file_sha1(custom_p1)
+right_upload_hash = _uploaded_file_sha1(custom_p2)
+left_is_cutout = _uploaded_file_is_transparent_cutout(custom_p1)
+right_is_cutout = _uploaded_file_is_transparent_cutout(custom_p2)
+
+# A converted AI portrait is used only for the exact source file it was generated from.
+# A normal opaque JPEG is treated as AI input, not pasted as a rectangle over the stadium.
+if custom_p1 and st.session_state.p1_ai_front is not None and st.session_state.p1_ai_source_hash == left_upload_hash:
+    p1_final = st.session_state.p1_ai_front
+elif custom_p1 and left_is_cutout:
+    p1_final = Image.open(io.BytesIO(custom_p1.getvalue())).convert("RGBA")
 elif st.session_state.p1_cutout is not None:
     p1_final = st.session_state.p1_cutout
 elif c1_info.get("player_png"):
@@ -852,14 +1034,21 @@ elif c1_info.get("player_png"):
 else:
     p1_final = None
 
-if custom_p2:
-    p2_final = Image.open(custom_p2).convert("RGBA")
+if custom_p2 and st.session_state.p2_ai_front is not None and st.session_state.p2_ai_source_hash == right_upload_hash:
+    p2_final = st.session_state.p2_ai_front
+elif custom_p2 and right_is_cutout:
+    p2_final = Image.open(io.BytesIO(custom_p2.getvalue())).convert("RGBA")
 elif st.session_state.p2_cutout is not None:
     p2_final = st.session_state.p2_cutout
 elif c2_info.get("player_png"):
     p2_final = fetch_online_image(c2_info["player_png"])
 else:
     p2_final = None
+
+if custom_p1 and not left_is_cutout and st.session_state.p1_ai_source_hash != left_upload_hash:
+    st.info("Left upload has no transparent background yet. Press ‘Convert LEFT to front-facing’ to create a cutout.")
+if custom_p2 and not right_is_cutout and st.session_state.p2_ai_source_hash != right_upload_hash:
+    st.info("Right upload has no transparent background yet. Press ‘Convert RIGHT to front-facing’ to create a cutout.")
 
 def _looks_like_square_headshot(image):
     """Detect a likely square squad portrait; this cannot prove the source is a headshot."""
@@ -967,4 +1156,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("Tip: use front-facing, high-resolution transparent upper-body cutouts for the best match. A side-facing source photo cannot be turned toward camera by standard resizing/cropping alone; that requires a connected AI image-editing service. The T20 badge and Hindi Commentary box are rendered into the final 3840 × 2160 PNG.")
+st.caption("AI front-facing conversion uses the OpenAI image-edit API only when you press a Convert button. Set OPENAI_API_KEY in Render → Environment first; API usage may be billed. Always inspect generated portraits for identity and uniform accuracy. The downloaded PNG is rendered at 3840 × 2160.")
