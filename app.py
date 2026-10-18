@@ -20,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v13-priority-layout-blue-green"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v14-clean-portraits-subtle-panels-crisp-flags"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -848,12 +848,21 @@ def get_image_alpha_content(image):
 
 
 def apply_sports_color_grade(image):
+    """Apply restrained thumbnail finishing without reshaping or regenerating facial features."""
     if image is None:
         return None
-    image = ImageEnhance.Color(image).enhance(1.10)
-    image = ImageEnhance.Contrast(image).enhance(1.06)
-    image = ImageEnhance.Sharpness(image).enhance(1.24)
-    return image
+    image = image.convert("RGBA")
+    alpha = image.getchannel("A")
+    rgb = image.convert("RGB")
+    # Mild colour/contrast adjustments keep jerseys vivid while preserving natural skin tones.
+    rgb = ImageEnhance.Color(rgb).enhance(1.07)
+    rgb = ImageEnhance.Contrast(rgb).enhance(1.04)
+    # Gentle detail sharpening avoids the harsh halos caused by aggressive sharpness boosts.
+    rgb = ImageEnhance.Sharpness(rgb).enhance(1.10)
+    rgb = rgb.filter(ImageFilter.UnsharpMask(radius=1.25, percent=95, threshold=4))
+    finished = rgb.convert("RGBA")
+    finished.putalpha(alpha)
+    return finished
 
 
 # Exact player placement boxes measured from the 16:9 reference thumbnail.
@@ -880,6 +889,11 @@ def render_player_cutout(canvas, player_img, side):
         return
 
     player = get_image_alpha_content(apply_sports_color_grade(player_img)).convert("RGBA")
+    # Smooth only the transparent cutout boundary by a fraction of a pixel; image pixels
+    # and facial features are otherwise left untouched by this edge-cleanup step.
+    source_alpha = player.getchannel("A")
+    if source_alpha.getextrema() != (255, 255):
+        player.putalpha(source_alpha.filter(ImageFilter.GaussianBlur(radius=0.40)))
     if side == "left":
         max_w, max_h = LEFT_PLAYER_WIDTH, LEFT_PLAYER_HEIGHT
     elif side == "right":
@@ -1051,11 +1065,18 @@ def draw_team_flag_watermark(canvas, flag_image, x, y, size, main_color, accent_
 
     if flag_image is not None:
         flag = flag_image.convert("RGBA")
-        # Contain-fit the full rectangular flag on the badge; don't crop away its identifying details.
-        max_flag = int(size * 0.72)
+        # Improve flag colour definition/edge clarity while preserving each flag's artwork.
+        flag_alpha = flag.getchannel("A")
+        flag_rgb = ImageEnhance.Color(flag.convert("RGB")).enhance(1.10)
+        flag_rgb = ImageEnhance.Contrast(flag_rgb).enhance(1.16)
+        flag_rgb = ImageEnhance.Sharpness(flag_rgb).enhance(1.12)
+        flag = flag_rgb.convert("RGBA")
+        flag.putalpha(flag_alpha)
+        # Contain-fit the full rectangular flag on the badge; don't crop away identifying details.
+        max_flag = int(size * 0.82)
         scale = min(max_flag / max(1, flag.width), max_flag / max(1, flag.height))
         flag = flag.resize((max(1, int(flag.width * scale)), max(1, int(flag.height * scale))), Image.Resampling.LANCZOS)
-        fa = flag.getchannel("A").point(lambda value: int(value * opacity / 255))
+        fa = flag.getchannel("A").point(lambda value: int(value * min(255, opacity + 20) / 255))
         flag.putalpha(fa)
         fx = (size - flag.width) // 2
         fy = (size - flag.height) // 2
@@ -1085,32 +1106,32 @@ def draw_team_color_backplates(canvas, team1_name, team2_name, flag1, flag2):
     right_inner_x = int(w * 0.66)
     right_outer_diag_x = int(w * 0.565)
 
-    # Main tinted side panels.
+    # Main tinted side panels: lower alpha keeps the real stadium and pitch visible.
     d.polygon([(0, 0), (left_inner_x, 0), (left_outer_diag_x, panel_bottom), (0, panel_bottom)],
-              fill=(*left_main, 88))
+              fill=(*left_main, 48))
     d.polygon([(w, 0), (w - left_inner_x, 0), (w - left_outer_diag_x, panel_bottom), (w, panel_bottom)],
-              fill=(*right_main, 88))
+              fill=(*right_main, 48))
 
-    # Rich darker insets add depth behind the player portraits.
+    # Subtle dark insets add depth without overwhelming the player cutouts.
     d.polygon([(0, 0), (int(w * .19), 0), (int(w * .29), panel_bottom), (0, panel_bottom)],
-              fill=(*left_dark, 34))
+              fill=(*left_dark, 16))
     d.polygon([(w, 0), (int(w * .81), 0), (int(w * .71), panel_bottom), (w, panel_bottom)],
-              fill=(*right_dark, 34))
+              fill=(*right_dark, 16))
 
-    # Diagonal team-colour slashes, inspired by the reference channel's split panels.
-    d.polygon([(int(w * .245), 0), (int(w * .276), 0), (int(w * .356), panel_bottom),
-               (int(w * .325), panel_bottom)], fill=(*left_accent, 150))
-    d.polygon([(int(w * .755), 0), (int(w * .724), 0), (int(w * .644), panel_bottom),
-               (int(w * .675), panel_bottom)], fill=(*right_accent, 150))
-    # Thin white separation pinstripes add sharp thumbnail contrast.
-    d.line([(int(w * .282), 0), (int(w * .362), panel_bottom)], fill=(255, 255, 255, 112), width=7)
-    d.line([(int(w * .718), 0), (int(w * .638), panel_bottom)], fill=(255, 255, 255, 112), width=7)
+    # Narrower, softer team-colour slashes: colour is an accent, not a dominant overlay.
+    d.polygon([(int(w * .254), 0), (int(w * .274), 0), (int(w * .344), panel_bottom),
+               (int(w * .324), panel_bottom)], fill=(*left_accent, 76))
+    d.polygon([(int(w * .746), 0), (int(w * .726), 0), (int(w * .656), panel_bottom),
+               (int(w * .676), panel_bottom)], fill=(*right_accent, 76))
+    # Fine, subdued separator pinstripes.
+    d.line([(int(w * .282), 0), (int(w * .352), panel_bottom)], fill=(255, 255, 255, 58), width=4)
+    d.line([(int(w * .718), 0), (int(w * .648), panel_bottom)], fill=(255, 255, 255, 58), width=4)
     canvas.alpha_composite(layer)
 
-    # Large faded team logos/flags sit BEHIND the players. Player cutouts are composited next.
-    watermark_size = 285
-    draw_team_flag_watermark(canvas, flag1, 30, 58, watermark_size, left_main, left_accent, opacity=145)
-    draw_team_flag_watermark(canvas, flag2, w - watermark_size - 30, 58, watermark_size, right_main, right_accent, opacity=145)
+    # Compact upper-corner flag badges stay clear, saturated, and behind the player/text layers.
+    watermark_size = 255
+    draw_team_flag_watermark(canvas, flag1, 34, 48, watermark_size, left_main, left_accent, opacity=225)
+    draw_team_flag_watermark(canvas, flag2, w - watermark_size - 34, 48, watermark_size, right_main, right_accent, opacity=225)
 
 
 def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
