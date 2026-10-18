@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlsplit, urlunsplit, urljoin
 
 import requests
+import numpy as np
 import streamlit as st
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
@@ -19,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v7-ai-front-pose-logo-reduced"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v8-gemini-nano-banana-2-1"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -269,111 +270,213 @@ def fetch_online_image(url):
 
 
 
-def get_openai_api_key():
-    """Read the OpenAI key from Render environment variables or Streamlit secrets."""
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key:
-        return key
+def get_gemini_api_key():
+    """Read the Gemini API key from Render env vars or Streamlit secrets."""
+    for env_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        key = os.environ.get(env_name, "").strip()
+        if key:
+            return key
     try:
-        return str(st.secrets.get("OPENAI_API_KEY", "")).strip()
+        for secret_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            key = str(st.secrets.get(secret_name, "")).strip()
+            if key:
+                return key
     except Exception:
-        return ""
+        pass
+    return ""
+
+
+def _find_gemini_image_block(payload):
+    """Handle the image convenience field and nested Interaction output variants."""
+    if not isinstance(payload, dict):
+        return None
+    direct = payload.get("output_image")
+    if isinstance(direct, dict) and direct.get("data"):
+        return direct
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "image" and node.get("data"):
+                return node
+            # Some responses use output/content/steps/model_output nesting.
+            for value in node.values():
+                found = walk(value)
+                if found:
+                    return found
+        elif isinstance(node, list):
+            for value in node:
+                found = walk(value)
+                if found:
+                    return found
+        return None
+
+    return walk(payload.get("output", payload))
+
+
+def _remove_magenta_chroma_background(image):
+    """Convert a deliberately requested pure-magenta backing into a soft alpha mask.
+
+    Gemini image generation doesn't expose a guaranteed transparent-background option
+    in its image response format. We therefore request a uniform magenta background and
+    key that color out when the model follows the instruction.
+    """
+    image = image.convert("RGBA")
+    alpha = image.getchannel("A")
+    alpha_array_existing = np.asarray(alpha, dtype=np.uint8)
+    # Treat it as a true cutout only when a meaningful portion of the image is transparent.
+    # A few partially transparent pixels alone should not bypass the chroma-key cleanup.
+    if float(np.mean(alpha_array_existing < 250)) > 0.03:
+        return image
+
+    rgb = np.asarray(image.convert("RGB"), dtype=np.int16)
+    red, green, blue = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    magenta_like = (
+        (red > 90) & (blue > 90) & (green < 185)
+        & ((red - green) > 38) & ((blue - green) > 38)
+    )
+    score = np.minimum(red - green, blue - green)
+    # Keep non-magenta colors fully opaque; soften only the magenta range.
+    keyed_alpha = 255 - np.clip((score - 22) * (255.0 / 100.0), 0, 255)
+    alpha_array = np.where(magenta_like, keyed_alpha, 255).astype(np.uint8)
+
+    # Refuse to silently composite a full rectangle if Gemini ignored the key-color request.
+    border_pixels = np.concatenate([
+        magenta_like[0, :], magenta_like[-1, :],
+        magenta_like[:, 0], magenta_like[:, -1],
+    ])
+    if float(border_pixels.mean()) < 0.10:
+        raise ValueError(
+            "Gemini returned an image without a clear magenta background, so it could not be safely cut out. "
+            "Try Convert again; the original photo has not been changed."
+        )
+
+    keyed = Image.fromarray(alpha_array, mode="L").filter(ImageFilter.GaussianBlur(0.45))
+    image.putalpha(keyed)
+    return image
 
 
 def convert_player_to_front_facing(upload_bytes, filename, side):
-    """Use the OpenAI image-edit API to create a front-facing transparent player cutout.
+    """Use Gemini Nano Banana to edit a cricket photo into a front-facing cutout.
 
-    This call is intentionally user-triggered because image-edit requests can incur API charges.
+    Uses Google's REST Interactions API so the app doesn't require an extra SDK.
+    The call is user-triggered because image editing may incur API charges.
     Returns (PIL.Image or None, error message or None).
     """
-    api_key = get_openai_api_key()
+    api_key = get_gemini_api_key()
     if not api_key:
         return None, (
-            "AI pose conversion is not configured. Add OPENAI_API_KEY under Render → Environment, "
-            "then redeploy. The image-edit API may incur usage charges."
+            "Gemini image editing is not configured. Create a Gemini API key in Google AI Studio, "
+            "then add it in Render → Environment as GEMINI_API_KEY and redeploy. "
+            "Gemini API usage may be billed separately from your Gemini Pro subscription."
         )
 
     try:
-        with Image.open(io.BytesIO(upload_bytes)) as source:
-            source.load()
-            source = source.convert("RGBA")
-            # Keep requests fast and comfortably below the image API upload limit.
-            max_edge = 2048
-            if max(source.size) > max_edge:
-                scale = max_edge / max(source.size)
+        with Image.open(io.BytesIO(upload_bytes)) as opened:
+            opened.load()
+            source = opened.convert("RGBA")
+            if max(source.size) > 1600:
+                scale = 1600 / max(source.size)
                 source = source.resize(
                     (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
                     Image.Resampling.LANCZOS,
                 )
+            # Photos go as compact JPEG; input cutouts keep their transparency as PNG.
+            has_alpha = source.getchannel("A").getextrema()[0] < 250
             source_buffer = io.BytesIO()
-            source.save(source_buffer, format="PNG", optimize=False, compress_level=3)
+            if has_alpha:
+                source.save(source_buffer, format="PNG", optimize=False, compress_level=3)
+                mime_type = "image/png"
+            else:
+                source.convert("RGB").save(source_buffer, format="JPEG", quality=90, optimize=True)
+                mime_type = "image/jpeg"
             source_bytes = source_buffer.getvalue()
     except Exception as exc:
         return None, f"Could not read the uploaded photo: {exc}"
 
     side_label = "left" if side == "left" else "right"
     prompt = (
-        "Edit the attached real cricket-player photo for a professional live-match thumbnail. "
-        "Change the pose to a natural FRONT-FACING, straight-on portrait, looking directly at the camera. "
-        "Turn the face and head toward the camera, show both eyes clearly, and rotate the shoulders naturally "
-        "so they are nearly square to the camera. Keep the same person recognisable and preserve their face, "
-        "skin tone, hairstyle, age, and the original team's jersey colors and overall uniform style. "
-        "Frame the person from the top of the head to around the waist or mid-torso, with both shoulders visible. "
-        "Create a clean transparent background and natural hair/jersey edges suitable for compositing on a cricket stadium. "
-        "Photorealistic editorial sports photography, natural anatomy, authentic fabric detail. "
-        "Do not add text, graphics, flags, logos that were not present, extra people, hands near the face, "
-        "watermarks, or a background scene. Do not make a side profile or three-quarter pose. "
-        "Keep the person centred with a little transparent margin around the hair and shoulders. "
-        f"This will be placed on the {side_label} side of a 16:9 cricket thumbnail. Return only the edited cutout."
+        "Edit the supplied real cricket-player photograph for a professional sports broadcast thumbnail. "
+        "Make the SAME player face directly forward toward the camera: head straight, both eyes visible, "
+        "nose and shoulders aligned naturally toward the lens, shoulders nearly square to camera. "
+        "Avoid side profile and avoid three-quarter pose. Preserve the person's recognizable identity, "
+        "facial proportions, skin tone, hairstyle, age, and the same team's uniform colors/design as closely "
+        "as possible. Frame from the top of the head to around the waist or mid-torso with both shoulders "
+        "and the jersey visible. Use realistic anatomy, photographic skin texture and crisp sports-photo detail. "
+        "Do not add text, flags, graphics, watermarks, other people, or props. "
+        "IMPORTANT CUTOUT REQUIREMENT: place the player against a perfectly flat, uniform pure magenta "
+        "background RGB(255, 0, 255), edge to edge. No gradient, texture, shadows, stadium, or colored rim light. "
+        "Keep magenta only in the empty background, never on the player. Center the player with a little margin "
+        f"around hair and shoulders for the {side_label} side of a 16:9 cricket thumbnail. Return one edited image."
     )
 
-    headers = {"Authorization": f"Bearer {api_key}"}
-    files = {"image": ("player_source.png", source_bytes, "image/png")}
-    data = {
-        "model": "gpt-image-2",
-        "prompt": prompt,
-        "size": "auto",
-        "quality": "high",
-        "background": "transparent",
-        "output_format": "png",
+    request_body = {
+        "model": os.environ.get("GEMINI_IMAGE_MODEL", "gemini-nano-banana-2.1").strip(),
+        "input": [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image",
+                "data": base64.b64encode(source_bytes).decode("ascii"),
+                "mime_type": mime_type,
+            },
+        ],
+        "response_format": {
+            "type": "image",
+            "mime_type": "image/png",
+            "aspect_ratio": "3:4",
+            "image_size": "2K",
+        },
     }
+
     try:
         response = requests.post(
-            "https://api.openai.com/v1/images/edits",
-            headers=headers,
-            files=files,
-            data=data,
+            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+            json=request_body,
             timeout=(15, 240),
         )
         if response.status_code >= 400:
             detail = ""
             try:
-                detail = response.json().get("error", {}).get("message", "")
+                err_json = response.json()
+                err = err_json.get("error", {}) if isinstance(err_json, dict) else {}
+                detail = err.get("message", "") if isinstance(err, dict) else str(err)
             except Exception:
-                detail = response.text[:400]
-            return None, f"AI image editing failed (HTTP {response.status_code}). {detail}".strip()
+                detail = response.text[:500]
+            if response.status_code in (401, 403):
+                return None, (
+                    "Gemini rejected the API key or permission (HTTP "
+                    f"{response.status_code}). Check GEMINI_API_KEY in Render and verify the key's project/API access. "
+                    + detail
+                ).strip()
+            if response.status_code == 429:
+                return None, (
+                    "Gemini API quota/rate limit reached (HTTP 429). Check your AI Studio API usage/billing or retry later. "
+                    + detail
+                ).strip()
+            return None, f"Gemini image editing failed (HTTP {response.status_code}). {detail}".strip()
+
         payload = response.json()
-        results = payload.get("data") or []
-        if not results:
-            return None, "The image-edit service returned no image. Please try another photo."
-        first = results[0]
-        if first.get("b64_json"):
-            image_bytes = base64.b64decode(first["b64_json"])
-        elif first.get("url"):
-            image_response = requests.get(first["url"], timeout=45)
-            image_response.raise_for_status()
-            image_bytes = image_response.content
-        else:
-            return None, "The image-edit service returned an unrecognised image response."
+        image_block = _find_gemini_image_block(payload)
+        if not image_block:
+            return None, "Gemini returned no image. Try again or use a clearer, higher-resolution player photo."
+        encoded = image_block.get("data")
+        if not encoded:
+            return None, "Gemini's response did not contain image data."
+        image_bytes = base64.b64decode(encoded)
         with Image.open(io.BytesIO(image_bytes)) as output_image:
             output_image.load()
-            return output_image.convert("RGBA"), None
+            converted = output_image.convert("RGBA")
+        try:
+            converted = _remove_magenta_chroma_background(converted)
+        except ValueError as exc:
+            return None, str(exc)
+        return converted, None
     except requests.Timeout:
-        return None, "AI pose conversion timed out. Try a smaller source photo or retry later."
+        return None, "Gemini pose conversion timed out. Try a smaller source photo or retry later."
     except requests.RequestException as exc:
-        return None, f"Could not reach the AI image-edit service: {exc}"
+        return None, f"Could not reach the Gemini image-edit API: {exc}"
     except Exception as exc:
-        return None, f"AI pose conversion failed: {exc}"
+        return None, f"Gemini pose conversion failed: {exc}"
 
 def _player_image_from_object(player_obj):
     """Read image URLs from several common ESPNcricinfo JSON shapes."""
@@ -947,9 +1050,9 @@ with col_left:
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
     st.subheader("5. Upload Player Photos — AI Front-Facing Pose")
     st.caption(
-        "Upload a side-facing photo and press Convert. The AI editor will attempt to turn the head and shoulders toward camera, "
-        "preserve the player's appearance, and produce a transparent cutout. Add OPENAI_API_KEY in Render Environment first; "
-        "AI edits can incur API charges and may not perfectly preserve fine uniform details."
+        "Upload a side-facing photo and press Convert. Gemini Nano Banana will attempt to turn the head and shoulders toward camera. "
+        "The app requests a magenta background and removes it to create a player cutout. Add GEMINI_API_KEY in Render Environment; "
+        "API use may be billed separately from Gemini Pro, and identity/uniform details should be checked."
     )
     col_up1, col_up2 = st.columns(2)
     with col_up1:
@@ -1156,4 +1259,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("AI front-facing conversion uses the OpenAI image-edit API only when you press a Convert button. Set OPENAI_API_KEY in Render → Environment first; API usage may be billed. Always inspect generated portraits for identity and uniform accuracy. The downloaded PNG is rendered at 3840 × 2160.")
+st.caption("AI front-facing conversion uses Gemini Nano Banana only when you press a Convert button. Set GEMINI_API_KEY in Render → Environment first. Gemini API use may be billed separately from your Gemini Pro subscription. Inspect generated portraits for identity/uniform accuracy. The downloaded PNG is rendered at 3840 × 2160.")
