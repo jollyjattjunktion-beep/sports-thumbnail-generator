@@ -20,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v12-team-color-panels-watermarks"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v13-priority-layout-blue-green"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -852,21 +852,21 @@ def apply_sports_color_grade(image):
         return None
     image = ImageEnhance.Color(image).enhance(1.10)
     image = ImageEnhance.Contrast(image).enhance(1.06)
-    image = ImageEnhance.Sharpness(image).enhance(1.15)
+    image = ImageEnhance.Sharpness(image).enhance(1.24)
     return image
 
 
 # Exact player placement boxes measured from the 16:9 reference thumbnail.
 # Canvas: 3840 x 2160 px. The independent left/right sizes intentionally match the reference.
-LEFT_PLAYER_WIDTH = 1640
-LEFT_PLAYER_HEIGHT = 1960
+LEFT_PLAYER_WIDTH = 1700
+LEFT_PLAYER_HEIGHT = 2025
 LEFT_PLAYER_X = 0
-LEFT_PLAYER_Y = CANVAS_HEIGHT - LEFT_PLAYER_HEIGHT  # 200 px from top
+LEFT_PLAYER_Y = CANVAS_HEIGHT - LEFT_PLAYER_HEIGHT  # 135 px from top
 
-RIGHT_PLAYER_WIDTH = 1600
-RIGHT_PLAYER_HEIGHT = 1920
-RIGHT_PLAYER_X = CANVAS_WIDTH - RIGHT_PLAYER_WIDTH  # 2240 px from left
-RIGHT_PLAYER_Y = CANVAS_HEIGHT - RIGHT_PLAYER_HEIGHT  # 240 px from top
+RIGHT_PLAYER_WIDTH = 1660
+RIGHT_PLAYER_HEIGHT = 2000
+RIGHT_PLAYER_X = CANVAS_WIDTH - RIGHT_PLAYER_WIDTH  # 2180 px from left
+RIGHT_PLAYER_Y = CANVAS_HEIGHT - RIGHT_PLAYER_HEIGHT  # 160 px from top
 
 
 def render_player_cutout(canvas, player_img, side):
@@ -929,7 +929,7 @@ def draw_centered_text(draw, canvas_width, text, y, font, fill, stroke_width=0, 
 
 def draw_brand_pill(draw, channel_text):
     """Smaller top-centre brand pill, keeping attention on players and LIVE text."""
-    font = load_robust_font(72)  # Compact brand pill: keep it away from players and face area.
+    font = load_robust_font(86)  # Slightly larger but consistently anchored top-centre.
     parts = str(channel_text or "PREET SPORTS").strip().split(maxsplit=1)
     if len(parts) == 2:
         first, second = parts[0], parts[1]
@@ -947,15 +947,15 @@ def draw_brand_pill(draw, channel_text):
     pad_x, pad_y = 36, 17
     x0 = center_x - total_w // 2 - pad_x
     x1 = center_x + total_w // 2 + pad_x
-    y0, y1 = 38, 38 + total_h + 2 * pad_y
+    y0, y1 = 34, 34 + total_h + 2 * pad_y
     radius = (y1 - y0) // 2
     draw_pill_badge(draw, (x0, y0, x1, y1), (255, 255, 255, 255), (10, 10, 10, 255), 7, radius)
-    draw.rounded_rectangle((x0 - 4, y0 - 4, x1 + 4, y1 + 4), radius=radius + 4, outline=(220, 20, 30, 255), width=4)
+    draw.rounded_rectangle((x0 - 4, y0 - 4, x1 + 4, y1 + 4), radius=radius + 4, outline=(22, 70, 150, 255), width=4)
     text_x = center_x - total_w // 2
     text_y = y0 + (y1 - y0 - total_h) // 2 - bbox1[1]
     draw.text((text_x, text_y), first, font=font, fill=(7, 7, 7, 255))
     if second:
-        draw.text((text_x + w1 + gap, text_y), second, font=font, fill=(224, 18, 27, 255))
+        draw.text((text_x + w1 + gap, text_y), second, font=font, fill=(12, 72, 155, 255))
 
 
 def draw_arrow_banner(draw, x, y, width, height, text, font, side):
@@ -1006,28 +1006,28 @@ TEAM_COLOR_PALETTES = {
     "IND W": ((20, 83, 225), (255, 132, 30), (5, 35, 112)),
     "PAK": ((0, 111, 67), (190, 245, 120), (0, 53, 35)),
     "PAKISTAN": ((0, 111, 67), (190, 245, 120), (0, 53, 35)),
-    "SL": ((126, 20, 48), (255, 190, 20), (68, 8, 28)),
-    "SRI LANKA": ((126, 20, 48), (255, 190, 20), (68, 8, 28)),
+    "SL": ((15, 54, 125), (255, 190, 20), (4, 24, 65)),
+    "SRI LANKA": ((15, 54, 125), (255, 190, 20), (4, 24, 65)),
     "AUS": ((0, 70, 170), (255, 190, 0), (0, 28, 83)),
     "AUSTRALIA": ((0, 70, 170), (255, 190, 0), (0, 28, 83)),
     "AUS WOMEN": ((0, 70, 170), (255, 190, 0), (0, 28, 83)),
     "NZ": ((16, 28, 48), (0, 184, 220), (3, 9, 20)),
     "NEW ZEALAND": ((16, 28, 48), (0, 184, 220), (3, 9, 20)),
     "NZ WOMEN": ((16, 28, 48), (0, 184, 220), (3, 9, 20)),
-    "WI": ((126, 10, 53), (255, 205, 20), (60, 4, 31)),
-    "WEST INDIES": ((126, 10, 53), (255, 205, 20), (60, 4, 31)),
-    "ENG": ((15, 49, 112), (225, 30, 51), (4, 18, 55)),
-    "ENGLAND": ((15, 49, 112), (225, 30, 51), (4, 18, 55)),
+    "WI": ((16, 45, 110), (255, 205, 20), (5, 21, 58)),
+    "WEST INDIES": ((16, 45, 110), (255, 205, 20), (5, 21, 58)),
+    "ENG": ((15, 49, 112), (210, 230, 255), (4, 18, 55)),
+    "ENGLAND": ((15, 49, 112), (210, 230, 255), (4, 18, 55)),
     "ZIM": ((0, 112, 75), (255, 203, 0), (0, 56, 38)),
     "ZIMBABWE": ((0, 112, 75), (255, 203, 0), (0, 56, 38)),
     "ZIM-W": ((0, 112, 75), (255, 203, 0), (0, 56, 38)),
     "ZIM W": ((0, 112, 75), (255, 203, 0), (0, 56, 38)),
     "SA": ((0, 105, 76), (255, 205, 0), (0, 43, 34)),
     "SOUTH AFRICA": ((0, 105, 76), (255, 205, 0), (0, 43, 34)),
-    "BAN": ((0, 106, 78), (225, 30, 55), (0, 48, 36)),
-    "BANGLADESH": ((0, 106, 78), (225, 30, 55), (0, 48, 36)),
-    "AFG": ((25, 75, 160), (210, 35, 50), (8, 35, 90)),
-    "AFGHANISTAN": ((25, 75, 160), (210, 35, 50), (8, 35, 90)),
+    "BAN": ((0, 106, 78), (235, 245, 235), (0, 48, 36)),
+    "BANGLADESH": ((0, 106, 78), (235, 245, 235), (0, 48, 36)),
+    "AFG": ((25, 75, 160), (75, 190, 120), (8, 35, 90)),
+    "AFGHANISTAN": ((25, 75, 160), (75, 190, 120), (8, 35, 90)),
 }
 
 
@@ -1087,30 +1087,30 @@ def draw_team_color_backplates(canvas, team1_name, team2_name, flag1, flag2):
 
     # Main tinted side panels.
     d.polygon([(0, 0), (left_inner_x, 0), (left_outer_diag_x, panel_bottom), (0, panel_bottom)],
-              fill=(*left_main, 178))
+              fill=(*left_main, 88))
     d.polygon([(w, 0), (w - left_inner_x, 0), (w - left_outer_diag_x, panel_bottom), (w, panel_bottom)],
-              fill=(*right_main, 178))
+              fill=(*right_main, 88))
 
     # Rich darker insets add depth behind the player portraits.
     d.polygon([(0, 0), (int(w * .19), 0), (int(w * .29), panel_bottom), (0, panel_bottom)],
-              fill=(*left_dark, 95))
+              fill=(*left_dark, 34))
     d.polygon([(w, 0), (int(w * .81), 0), (int(w * .71), panel_bottom), (w, panel_bottom)],
-              fill=(*right_dark, 95))
+              fill=(*right_dark, 34))
 
     # Diagonal team-colour slashes, inspired by the reference channel's split panels.
     d.polygon([(int(w * .245), 0), (int(w * .276), 0), (int(w * .356), panel_bottom),
-               (int(w * .325), panel_bottom)], fill=(*left_accent, 238))
+               (int(w * .325), panel_bottom)], fill=(*left_accent, 150))
     d.polygon([(int(w * .755), 0), (int(w * .724), 0), (int(w * .644), panel_bottom),
-               (int(w * .675), panel_bottom)], fill=(*right_accent, 238))
+               (int(w * .675), panel_bottom)], fill=(*right_accent, 150))
     # Thin white separation pinstripes add sharp thumbnail contrast.
-    d.line([(int(w * .282), 0), (int(w * .362), panel_bottom)], fill=(255, 255, 255, 155), width=9)
-    d.line([(int(w * .718), 0), (int(w * .638), panel_bottom)], fill=(255, 255, 255, 155), width=9)
+    d.line([(int(w * .282), 0), (int(w * .362), panel_bottom)], fill=(255, 255, 255, 112), width=7)
+    d.line([(int(w * .718), 0), (int(w * .638), panel_bottom)], fill=(255, 255, 255, 112), width=7)
     canvas.alpha_composite(layer)
 
     # Large faded team logos/flags sit BEHIND the players. Player cutouts are composited next.
-    watermark_size = 430
-    draw_team_flag_watermark(canvas, flag1, 34, 72, watermark_size, left_main, left_accent, opacity=225)
-    draw_team_flag_watermark(canvas, flag2, w - watermark_size - 34, 72, watermark_size, right_main, right_accent, opacity=225)
+    watermark_size = 285
+    draw_team_flag_watermark(canvas, flag1, 30, 58, watermark_size, left_main, left_accent, opacity=145)
+    draw_team_flag_watermark(canvas, flag2, w - watermark_size - 30, 58, watermark_size, right_main, right_accent, opacity=145)
 
 
 def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
@@ -1144,22 +1144,22 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     draw_brand_pill(draw, channel_text)
 
     # Large red LIVE with a clean white stroke, similar to the first reference image.
-    font_live = load_robust_font(555)
-    live_y = 420
+    font_live = load_robust_font(610)
+    live_y = 390
     draw_centered_text(
         draw, CANVAS_WIDTH, str(match_status or "LIVE"), live_y, font_live,
         (232, 15, 23, 255), stroke_width=25, stroke_fill=(255, 255, 255, 255)
     )
 
     # Blue rounded match badge directly under LIVE.
-    font_sub = load_robust_font(225)
+    font_sub = load_robust_font(205)
     badge_text = str(match_badge or "MATCH DAY")
     sub_bbox = draw.textbbox((0, 0), badge_text, font=font_sub, stroke_width=0)
     sw, sh = sub_bbox[2] - sub_bbox[0], sub_bbox[3] - sub_bbox[1]
-    badge_w = sw + 260
-    badge_h = sh + 65
+    badge_w = sw + 200
+    badge_h = sh + 50
     bx0 = (CANVAS_WIDTH - badge_w) // 2
-    by0 = 1130
+    by0 = 930
     draw_pill_badge(
         draw, (bx0, by0, bx0 + badge_w, by0 + badge_h),
         (0, 72, 205, 255), (255, 255, 255, 255), 9, badge_h // 2
@@ -1172,17 +1172,17 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     # Palette: deep navy fill, saffron outer border, white inner border, yellow/white text.
     commentary_label = str(commentary_text or "HINDI COMMENTARY").strip().upper()
     if commentary_label:
-        font_commentary = load_robust_font(108)
+        font_commentary = load_robust_font(92)
         # Reduce the label font only if a user enters unusually long text.
         while font_commentary.size > 64 and draw.textbbox((0, 0), commentary_label, font=font_commentary)[2] > 1750:
             font_commentary = load_robust_font(font_commentary.size - 6)
         cbbox = draw.textbbox((0, 0), commentary_label, font=font_commentary)
         ctext_w = cbbox[2] - cbbox[0]
         ctext_h = cbbox[3] - cbbox[1]
-        commentary_w = ctext_w + 150
-        commentary_h = max(122, ctext_h + 48)
+        commentary_w = ctext_w + 112
+        commentary_h = max(104, ctext_h + 34)
         commentary_x = (CANVAS_WIDTH - commentary_w) // 2
-        commentary_y = by0 + badge_h + 28
+        commentary_y = by0 + badge_h + 16
         # Keep it safely above the team banners even if fonts vary by host.
         banner_top = CANVAS_HEIGHT - 360 - 95
         commentary_y = min(commentary_y, banner_top - commentary_h - 20)
@@ -1190,8 +1190,8 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
             (commentary_x, commentary_y, commentary_x + commentary_w, commentary_y + commentary_h),
             radius=commentary_h // 2,
             fill=(8, 24, 55, 245),
-            outline=(255, 145, 0, 255),
-            width=12,
+            outline=(40, 105, 70, 255),
+            width=8,
         )
         inner_pad = 9
         draw.rounded_rectangle(
@@ -1199,7 +1199,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
              commentary_x + commentary_w - inner_pad, commentary_y + commentary_h - inner_pad),
             radius=max(20, commentary_h // 2 - inner_pad),
             outline=(255, 255, 255, 230),
-            width=4,
+            width=3,
         )
         # Split the default label so HINDI is highlighted yellow and COMMENTARY is white.
         if commentary_label == "HINDI COMMENTARY":
@@ -1208,7 +1208,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
             second_bbox = draw.textbbox((0, 0), second_word, font=font_commentary)
             first_w = first_bbox[2] - first_bbox[0]
             second_w = second_bbox[2] - second_bbox[0]
-            spacing = 24
+            spacing = 18
             start_x = (CANVAS_WIDTH - first_w - spacing - second_w) // 2
             text_y = commentary_y + (commentary_h - ctext_h) // 2 - cbbox[1]
             draw.text((start_x, text_y), first_word, font=font_commentary, fill=(255, 220, 0, 255))
@@ -1234,7 +1234,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
 # STREAMLIT UI
 # =========================================================
 st.title("🏏 PREET SPORTS — 4K Cricket Thumbnail Studio")
-st.caption("Team-colour diagonal panels, faded team-flag watermarks behind player cutouts, compact brand, bold LIVE / format badges and high-contrast nameplates. Export: 3840 × 2160 PNG.")
+st.caption("Sharper, slightly larger player portraits; oversized LIVE; compact match badge and Hindi discussion banner; visible blue/green stadium, subtle team panels and compact badges; bold black/white nameplates; 3840 × 2160 PNG export.")
 
 for key in ["p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front", "p1_ai_source_hash", "p2_ai_source_hash", "t1_code", "t2_code", "auto_bg"]:
     if key not in st.session_state:
