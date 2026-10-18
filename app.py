@@ -1,7 +1,8 @@
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 import requests
 import io
+import os
 from rembg import remove
 
 # --- Page Config ---
@@ -10,7 +11,7 @@ st.set_page_config(page_title="4K Sports Thumbnail Studio", layout="wide")
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
 
-# Team Captain Database for 1-click accurate fetch
+# Captain & Flag Roster Database
 CAPTAIN_DATABASE = {
     "IND": {"name": "Rohit Sharma", "flag": "https://flagcdn.com/w320/in.png"},
     "INDIA": {"name": "Rohit Sharma", "flag": "https://flagcdn.com/w320/in.png"},
@@ -26,21 +27,36 @@ CAPTAIN_DATABASE = {
     "SOUTH AFRICA": {"name": "Temba Bavuma", "flag": "https://flagcdn.com/w320/za.png"},
     "NZ": {"name": "Kane Williamson", "flag": "https://flagcdn.com/w320/nz.png"},
     "NEW ZEALAND": {"name": "Kane Williamson", "flag": "https://flagcdn.com/w320/nz.png"},
+    "BAN": {"name": "Najmul Hossain Shanto", "flag": "https://flagcdn.com/w320/bd.png"},
+    "AFG": {"name": "Hashmatullah Shahidi", "flag": "https://flagcdn.com/w320/af.png"},
+    "SL": {"name": "Charith Asalanka", "flag": "https://flagcdn.com/w320/lk.png"},
 }
+
+def load_robust_font(size):
+    """Loads a bold font across Windows, macOS, or Linux/Render."""
+    font_candidates = [
+        "arialbd.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "Helvetica-Bold.ttf",
+        "Arial.ttf"
+    ]
+    for font_path in font_candidates:
+        try:
+            return ImageFont.truetype(font_path, size)
+        except:
+            continue
+    return ImageFont.load_default()
 
 @st.cache_data(show_spinner=False)
 def fetch_player_image_from_web(player_name):
-    """
-    Fetches the lead image of the player via Wikipedia/Wikimedia Commons API,
-    then automatically isolates the player into a transparent PNG.
-    """
+    """Searches Wikipedia/Wikimedia API for full portrait, then removes background."""
     try:
-        # Step 1: Query Wikimedia for high-res player portrait
         search_url = f"https://en.wikipedia.org/w/api.php?action=query&titles={player_name.replace(' ', '%20')}&prop=pageimages&format=json&pithumbsize=2000"
         headers = {'User-Agent': 'SportsThumbnailApp/1.0 (contact@example.com)'}
         res = requests.get(search_url, headers=headers, timeout=10).json()
         pages = res.get("query", {}).get("pages", {})
-        
+
         img_url = None
         for _, page in pages.items():
             if "thumbnail" in page:
@@ -50,15 +66,11 @@ def fetch_player_image_from_web(player_name):
         if not img_url:
             return None
 
-        # Step 2: Download the image
         img_data = requests.get(img_url, headers=headers, timeout=15).content
         input_image = Image.open(io.BytesIO(img_data)).convert("RGBA")
-
-        # Step 3: Remove background to create a clean cutout
-        output_image = remove(input_image)
-        return output_image
+        return remove(input_image)
     except Exception as e:
-        st.warning(f"Could not fetch cutout for {player_name}: {e}")
+        st.warning(f"Could not load cutout for {player_name}: {e}")
         return None
 
 @st.cache_data(show_spinner=False)
@@ -69,6 +81,36 @@ def fetch_flag_image(url):
         return Image.open(io.BytesIO(res.content)).convert("RGBA")
     except:
         return None
+
+def apply_sports_color_grade(image):
+    """Enhances contrast, saturation, and sharpness for sports thumbnails."""
+    if not image:
+        return None
+    # 1. Boost Color Saturation
+    enhancer = ImageEnhance.Color(image)
+    image = enhancer.enhance(1.25)
+    # 2. Boost Contrast
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(1.20)
+    # 3. Boost Sharpness
+    enhancer = ImageEnhance.Sharpness(image)
+    image = enhancer.enhance(1.35)
+    return image
+
+def render_player_with_rim_light(canvas, player_img, pos_x, pos_y, target_w, target_h, glow_color=(255, 255, 255)):
+    """Pastes player onto canvas with a stadium floodlight edge glow."""
+    resized = player_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    alpha = resized.split()[3]
+
+    # Expand and blur the alpha mask to create rim lighting
+    glow_mask = alpha.filter(ImageFilter.MaxFilter(21)).filter(ImageFilter.GaussianBlur(15))
+    glow_surface = Image.new("RGBA", (target_w, target_h), glow_color + (0,))
+    glow_surface.putalpha(glow_mask)
+
+    # Paste glow behind the player
+    canvas.paste(glow_surface, (pos_x, pos_y), glow_surface)
+    # Paste actual player cutout on top
+    canvas.paste(resized, (pos_x, pos_y), resized)
 
 def draw_pill_badge(draw, bbox, fill_color, border_color=None, border_width=0, radius=50):
     x0, y0, x1, y1 = bbox
@@ -110,37 +152,32 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     else:
         canvas = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (20, 35, 65, 255))
 
-    # 2. Add Left Player
+    # 2. Render Left Player with Stadium Rim Glow
     if p1_img:
-        p1 = p1_img.convert("RGBA")
+        p1 = apply_sports_color_grade(p1_img.convert("RGBA"))
         p1_aspect = p1.width / p1.height
         target_h = int(CANVAS_HEIGHT * 0.95)
         target_w = int(target_h * p1_aspect)
-        p1 = p1.resize((target_w, target_h), Image.Resampling.LANCZOS)
-        canvas.paste(p1, (int(CANVAS_WIDTH * 0.05), CANVAS_HEIGHT - target_h), p1)
+        render_player_with_rim_light(canvas, p1, int(CANVAS_WIDTH * 0.05), CANVAS_HEIGHT - target_h, target_w, target_h)
 
-    # 3. Add Right Player
+    # 3. Render Right Player with Stadium Rim Glow
     if p2_img:
-        p2 = p2_img.convert("RGBA")
+        p2 = apply_sports_color_grade(p2_img.convert("RGBA"))
         p2_aspect = p2.width / p2.height
         target_h = int(CANVAS_HEIGHT * 0.95)
         target_w = int(target_h * p2_aspect)
-        p2 = p2.resize((target_w, target_h), Image.Resampling.LANCZOS)
-        canvas.paste(p2, (CANVAS_WIDTH - target_w - int(CANVAS_WIDTH * 0.05), CANVAS_HEIGHT - target_h), p2)
+        render_player_with_rim_light(canvas, p2, CANVAS_WIDTH - target_w - int(CANVAS_WIDTH * 0.05), CANVAS_HEIGHT - target_h, target_w, target_h)
 
     # 4. Text & Badges Overlay
     overlay = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    try:
-        font_live = ImageFont.truetype("arialbd.ttf", 460)
-        font_sub = ImageFont.truetype("arialbd.ttf", 160)
-        font_team = ImageFont.truetype("arialbd.ttf", 220)
-        font_brand = ImageFont.truetype("arialbd.ttf", 110)
-    except:
-        font_live = font_sub = font_team = font_brand = ImageFont.load_default()
+    font_live = load_robust_font(460)
+    font_sub = load_robust_font(160)
+    font_team = load_robust_font(220)
+    font_brand = load_robust_font(110)
 
-    # Branding Badge
+    # Branding Badge (PREET SPORTS)
     brand_bbox = font_brand.getbbox(channel_text)
     bw, bh = brand_bbox[2] - brand_bbox[0], brand_bbox[3] - brand_bbox[1]
     px, py = CANVAS_WIDTH // 2, 160
@@ -148,7 +185,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
                     fill_color=(255, 255, 255), border_color=(220, 30, 30), border_width=12, radius=60)
     draw.text((px - bw//2, py - brand_bbox[1]), channel_text, font=font_brand, fill=(220, 20, 20))
 
-    # Center LIVE Text
+    # Center LIVE Text with 3D White Stroke
     live_bbox = font_live.getbbox(match_status)
     lw, lh = live_bbox[2] - live_bbox[0], live_bbox[3] - live_bbox[1]
     lx, ly = (CANVAS_WIDTH - lw) // 2, (CANVAS_HEIGHT // 2) - 450
@@ -159,7 +196,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
             draw.text((lx + dx, ly + dy - live_bbox[1]), match_status, font=font_live, fill=(255, 255, 255))
     draw.text((lx, ly - live_bbox[1]), match_status, font=font_live, fill=(225, 25, 25))
 
-    # Sub-Heading (e.g. 2nd ODI)
+    # Sub-Heading (e.g., 2nd ODI)
     sub_bbox = font_sub.getbbox(match_badge)
     sw, sh = sub_bbox[2] - sub_bbox[0], sub_bbox[3] - sub_bbox[1]
     sx, sy = CANVAS_WIDTH // 2, ly + lh + 130
@@ -167,12 +204,12 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
                     fill_color=(15, 75, 175), border_color=(255, 255, 255), border_width=10, radius=50)
     draw.text((sx - sw//2, sy - sub_bbox[1]), match_badge, font=font_sub, fill=(255, 230, 0))
 
-    # Bottom Team Name Banners
+    # Team Arrow Banners
     banner_w, banner_h = 1100, 300
     draw_arrow_banner(draw, 100, CANVAS_HEIGHT - banner_h - 100, banner_w, banner_h, t1_name, font_team, "left")
     draw_arrow_banner(draw, CANVAS_WIDTH - banner_w - 100, CANVAS_HEIGHT - banner_h - 100, banner_w, banner_h, t2_name, font_team, "right")
 
-    # Flag Medallions
+    # Round Flags
     flag_size = 380
     if t1_flag:
         f1 = t1_flag.convert("RGBA").resize((flag_size, flag_size), Image.Resampling.LANCZOS)
@@ -191,9 +228,14 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     return Image.alpha_composite(canvas, overlay)
 
 
-# --- User Interface ---
+# --- Streamlit UI ---
 st.title("🏏 Auto 4K Sports Thumbnail Generator")
-st.caption("Enter team codes or names to automatically fetch transparent captain portraits.")
+st.caption("Auto-fetches captain cutouts, adds stadium rim glow, and creates broadcast-quality 4K graphics.")
+
+# Session State Initialization
+for key in ["p1_cutout", "p2_cutout", "f1_img", "f2_img"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
 col_left, col_right = st.columns([1, 1.2])
 
@@ -201,9 +243,9 @@ with col_left:
     st.subheader("1. Match & Teams")
     col_t1, col_t2 = st.columns(2)
     with col_t1:
-        team1 = st.text_input("Team 1 (e.g. IND, AUS, PAK)", value="IND").strip().upper()
+        team1 = st.text_input("Team 1 Code", value="IND").strip().upper()
     with col_t2:
-        team2 = st.text_input("Team 2 (e.g. WI, ENG, SA)", value="WI").strip().upper()
+        team2 = st.text_input("Team 2 Code", value="WI").strip().upper()
 
     col_txt1, col_txt2 = st.columns(2)
     with col_txt1:
@@ -213,46 +255,31 @@ with col_left:
 
     channel_title = st.text_input("Channel Title", value="PREET SPORTS")
 
-    st.subheader("2. Player Selection & Auto-Cutout")
-    
-    # Auto-resolve names from DB or allow typing
+    st.subheader("2. Auto-Captain Fetch")
     default_p1 = CAPTAIN_DATABASE.get(team1, {}).get("name", "")
     default_p2 = CAPTAIN_DATABASE.get(team2, {}).get("name", "")
 
-    p1_name = st.text_input("Player 1 Name (Auto-fetched)", value=default_p1)
-    p2_name = st.text_input("Player 2 Name (Auto-fetched)", value=default_p2)
+    p1_name = st.text_input("Player 1 Name", value=default_p1)
+    p2_name = st.text_input("Player 2 Name", value=default_p2)
 
-    auto_fetch = st.button("⚡ Fetch HD Player Cutouts", type="primary")
+    if st.button("⚡ Fetch HD Player Cutouts & Flags", type="primary"):
+        with st.spinner("Fetching HD portraits, removing background, and color-grading..."):
+            if p1_name:
+                st.session_state.p1_cutout = fetch_player_image_from_web(p1_name)
+            if p2_name:
+                st.session_state.p2_cutout = fetch_player_image_from_web(p2_name)
 
-    st.subheader("3. Optional Manual Uploads")
-    bg_file = st.file_uploader("Upload Custom 4K Stadium (Optional)", type=["png", "jpg"])
-    custom_p1 = st.file_uploader("Manual Upload Player 1 (PNG Cutout)", type=["png"])
-    custom_p2 = st.file_uploader("Manual Upload Player 2 (PNG Cutout)", type=["png"])
+            if team1 in CAPTAIN_DATABASE:
+                st.session_state.f1_img = fetch_flag_image(CAPTAIN_DATABASE[team1]["flag"])
+            if team2 in CAPTAIN_DATABASE:
+                st.session_state.f2_img = fetch_flag_image(CAPTAIN_DATABASE[team2]["flag"])
 
-# Process Images in Session State
-if "p1_cutout" not in st.session_state:
-    st.session_state.p1_cutout = None
-if "p2_cutout" not in st.session_state:
-    st.session_state.p2_cutout = None
-if "f1_img" not in st.session_state:
-    st.session_state.f1_img = None
-if "f2_img" not in st.session_state:
-    st.session_state.f2_img = None
+    st.subheader("3. Optional Uploads (Overrides Auto-Fetch)")
+    bg_file = st.file_uploader("Upload 4K Stadium BG", type=["png", "jpg"])
+    custom_p1 = st.file_uploader("Manual Left Player Cutout", type=["png"])
+    custom_p2 = st.file_uploader("Manual Right Player Cutout", type=["png"])
 
-if auto_fetch:
-    with st.spinner("Fetching HD portraits and cutting out backgrounds..."):
-        if p1_name:
-            st.session_state.p1_cutout = fetch_player_image_from_web(p1_name)
-        if p2_name:
-            st.session_state.p2_cutout = fetch_player_image_from_web(p2_name)
-            
-        # Fetch flags if available
-        if team1 in CAPTAIN_DATABASE:
-            st.session_state.f1_img = fetch_flag_image(CAPTAIN_DATABASE[team1]["flag"])
-        if team2 in CAPTAIN_DATABASE:
-            st.session_state.f2_img = fetch_flag_image(CAPTAIN_DATABASE[team2]["flag"])
-
-# Override if manual files were uploaded
+# Resolve Final Images
 p1_final = Image.open(custom_p1) if custom_p1 else st.session_state.p1_cutout
 p2_final = Image.open(custom_p2) if custom_p2 else st.session_state.p2_cutout
 bg_final = Image.open(bg_file) if bg_file else None
