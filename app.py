@@ -18,7 +18,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v5-cover-crop"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v6-hindi-commentary"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -609,7 +609,7 @@ def draw_round_flag(overlay, draw, flag_image, x, y, size):
 
 
 def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
-                       t1_name, t2_name, t1_flag, t2_flag):
+                       t1_name, t2_name, t1_flag, t2_flag, commentary_text="HINDI COMMENTARY"):
     # Real stadium first; use a hand-drawn stadium only if the remote image is unavailable.
     if bg_img is None:
         bg_img = fetch_default_stadium_background()
@@ -659,6 +659,56 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     tx = (CANVAS_WIDTH - sw) // 2
     ty = by0 + (badge_h - sh) // 2 - sub_bbox[1]
     draw.text((tx, ty), badge_text, font=font_sub, fill=(255, 230, 0, 255))
+
+    # Secondary Hindi Commentary box directly below the T20 / match-format badge.
+    # Palette: deep navy fill, saffron outer border, white inner border, yellow/white text.
+    commentary_label = str(commentary_text or "HINDI COMMENTARY").strip().upper()
+    if commentary_label:
+        font_commentary = load_robust_font(108)
+        # Reduce the label font only if a user enters unusually long text.
+        while font_commentary.size > 64 and draw.textbbox((0, 0), commentary_label, font=font_commentary)[2] > 1750:
+            font_commentary = load_robust_font(font_commentary.size - 6)
+        cbbox = draw.textbbox((0, 0), commentary_label, font=font_commentary)
+        ctext_w = cbbox[2] - cbbox[0]
+        ctext_h = cbbox[3] - cbbox[1]
+        commentary_w = ctext_w + 150
+        commentary_h = max(122, ctext_h + 48)
+        commentary_x = (CANVAS_WIDTH - commentary_w) // 2
+        commentary_y = by0 + badge_h + 28
+        # Keep it safely above the team banners even if fonts vary by host.
+        banner_top = CANVAS_HEIGHT - 360 - 95
+        commentary_y = min(commentary_y, banner_top - commentary_h - 20)
+        draw.rounded_rectangle(
+            (commentary_x, commentary_y, commentary_x + commentary_w, commentary_y + commentary_h),
+            radius=commentary_h // 2,
+            fill=(8, 24, 55, 245),
+            outline=(255, 145, 0, 255),
+            width=12,
+        )
+        inner_pad = 9
+        draw.rounded_rectangle(
+            (commentary_x + inner_pad, commentary_y + inner_pad,
+             commentary_x + commentary_w - inner_pad, commentary_y + commentary_h - inner_pad),
+            radius=max(20, commentary_h // 2 - inner_pad),
+            outline=(255, 255, 255, 230),
+            width=4,
+        )
+        # Split the default label so HINDI is highlighted yellow and COMMENTARY is white.
+        if commentary_label == "HINDI COMMENTARY":
+            first_word, second_word = "HINDI", "COMMENTARY"
+            first_bbox = draw.textbbox((0, 0), first_word, font=font_commentary)
+            second_bbox = draw.textbbox((0, 0), second_word, font=font_commentary)
+            first_w = first_bbox[2] - first_bbox[0]
+            second_w = second_bbox[2] - second_bbox[0]
+            spacing = 24
+            start_x = (CANVAS_WIDTH - first_w - spacing - second_w) // 2
+            text_y = commentary_y + (commentary_h - ctext_h) // 2 - cbbox[1]
+            draw.text((start_x, text_y), first_word, font=font_commentary, fill=(255, 220, 0, 255))
+            draw.text((start_x + first_w + spacing, text_y), second_word, font=font_commentary, fill=(255, 255, 255, 255))
+        else:
+            text_x = (CANVAS_WIDTH - ctext_w) // 2
+            text_y = commentary_y + (commentary_h - ctext_h) // 2 - cbbox[1]
+            draw.text((text_x, text_y), commentary_label, font=font_commentary, fill=(255, 255, 255, 255))
 
     # Bold inward-pointing team labels at the bottom.
     font_team = load_robust_font(245)
@@ -726,7 +776,7 @@ with col_left:
                     st.warning(err)
 
     st.subheader("2. Direct Captain Image URLs")
-    st.caption("Use larger transparent PNG/WebP player cutouts or high-resolution player photos. If ESPN's URL is a small cropped headshot, the thumbnail cannot recreate the missing torso.")
+    st.caption("Use front-facing, high-resolution upper-body photos or transparent PNG/WebP cutouts. This renderer can resize/crop a side-pose photo, but cannot turn the face toward camera without a connected generative image-editing API. Manual front-facing uploads override URL images.")
     left_captain_url = st.text_input(
         "Left Captain Image URL",
         placeholder="Paste the left captain's direct image URL",
@@ -771,7 +821,8 @@ with col_left:
     with col_status:
         match_status = st.text_input("Main Text", value="LIVE", key="match_status_input")
     with col_badge:
-        match_badge = st.text_input("Match Badge", value="2nd ODI", key="match_badge_input")
+        match_badge = st.text_input("Match Format / Badge", value="T20", key="match_badge_input")
+    commentary_text = st.text_input("Box below T20 badge", value="HINDI COMMENTARY", key="commentary_text_input")
     channel_title = st.text_input("Channel Brand", value="PREET SPORTS", key="channel_title_input")
 
     st.subheader("4. Background (optional override)")
@@ -858,6 +909,7 @@ render_signature = (
     str(channel_title),
     str(match_status),
     str(match_badge),
+    str(commentary_text),
     _image_cache_key(bg_final),
     _image_cache_key(p1_final),
     _image_cache_key(p2_final),
@@ -878,6 +930,7 @@ if st.session_state.get("_thumbnail_signature") != render_signature:
             t2_name=team2,
             t1_flag=flag1,
             t2_flag=flag2,
+            commentary_text=commentary_text,
         )
         # Hard guard: the downloadable file must always be exactly 3840 x 2160.
         # The render pipeline itself uses this canvas natively; this also protects against stale/modified renderers.
@@ -914,4 +967,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("Tip: for the large upper-body look in your reference, use high-resolution transparent player cutouts. ESPNcricinfo squad pages sometimes expose cropped portrait thumbnails; this code tries untransformed and high-resolution CDN variants, but cannot invent body details that are absent from the source image.")
+st.caption("Tip: use front-facing, high-resolution transparent upper-body cutouts for the best match. A side-facing source photo cannot be turned toward camera by standard resizing/cropping alone; that requires a connected AI image-editing service. The T20 badge and Hindi Commentary box are rendered into the final 3840 × 2160 PNG.")
