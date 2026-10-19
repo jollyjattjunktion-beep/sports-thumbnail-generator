@@ -1355,24 +1355,137 @@ with col_left:
                 key="download_generic_background_removed",
             )
 
-    st.subheader("5. Reference Thumbnail Player Extractor")
+    st.subheader("5. Remove Background from Cropped Player Images (Local)")
+    st.caption(
+        "Upload the already-cropped left and right player photos. The app removes the colored background locally "
+        "with rembg and creates transparent PNG cutouts—no Gemini API request is made. The cutouts can be applied "
+        "directly to the left/right player slots in your thumbnail."
+    )
+    cutout_left_col, cutout_right_col = st.columns(2)
+    with cutout_left_col:
+        cropped_left_upload = st.file_uploader(
+            "Upload cropped LEFT player image",
+            type=["png", "jpg", "jpeg", "webp"],
+            key="cropped_player_left_upload_v1",
+        )
+        if cropped_left_upload is not None:
+            left_source_bytes = cropped_left_upload.getvalue()
+            left_source_hash = hashlib.sha1(left_source_bytes).hexdigest()
+            if st.session_state.get("cropped_left_source_hash") != left_source_hash:
+                st.session_state["cropped_left_source_hash"] = left_source_hash
+                st.session_state["cropped_left_transparent"] = None
+            if st.button("✂️ Remove LEFT background", use_container_width=True, key="remove_cropped_left_bg_v1"):
+                with st.spinner("Removing the LEFT background locally…"):
+                    cutout, cutout_error = remove_background_from_any_image(left_source_bytes, cropped_left_upload.name)
+                if cutout is not None:
+                    st.session_state["cropped_left_transparent"] = cutout
+                    st.session_state.p1_cutout = cutout
+                    st.session_state["reference_left_cutout"] = cutout
+                    st.success("Left player background removed. This transparent cutout is now selected for the thumbnail.")
+                else:
+                    st.error(cutout_error or "Could not remove the left background.")
+            if st.session_state.get("cropped_left_transparent") is not None:
+                left_transparent = st.session_state["cropped_left_transparent"]
+                st.image(left_transparent, caption="LEFT player — transparent preview", use_container_width=True)
+                left_transparent_buffer = io.BytesIO()
+                left_transparent.save(left_transparent_buffer, format="PNG", optimize=False)
+                st.download_button(
+                    "⬇️ Download LEFT transparent PNG",
+                    data=left_transparent_buffer.getvalue(),
+                    file_name="left_player_transparent.png",
+                    mime="image/png",
+                    use_container_width=True,
+                    key="download_cropped_left_transparent_v1",
+                )
+    with cutout_right_col:
+        cropped_right_upload = st.file_uploader(
+            "Upload cropped RIGHT player image",
+            type=["png", "jpg", "jpeg", "webp"],
+            key="cropped_player_right_upload_v1",
+        )
+        if cropped_right_upload is not None:
+            right_source_bytes = cropped_right_upload.getvalue()
+            right_source_hash = hashlib.sha1(right_source_bytes).hexdigest()
+            if st.session_state.get("cropped_right_source_hash") != right_source_hash:
+                st.session_state["cropped_right_source_hash"] = right_source_hash
+                st.session_state["cropped_right_transparent"] = None
+            if st.button("✂️ Remove RIGHT background", use_container_width=True, key="remove_cropped_right_bg_v1"):
+                with st.spinner("Removing the RIGHT background locally…"):
+                    cutout, cutout_error = remove_background_from_any_image(right_source_bytes, cropped_right_upload.name)
+                if cutout is not None:
+                    st.session_state["cropped_right_transparent"] = cutout
+                    st.session_state.p2_cutout = cutout
+                    st.session_state["reference_right_cutout"] = cutout
+                    st.success("Right player background removed. This transparent cutout is now selected for the thumbnail.")
+                else:
+                    st.error(cutout_error or "Could not remove the right background.")
+            if st.session_state.get("cropped_right_transparent") is not None:
+                right_transparent = st.session_state["cropped_right_transparent"]
+                st.image(right_transparent, caption="RIGHT player — transparent preview", use_container_width=True)
+                right_transparent_buffer = io.BytesIO()
+                right_transparent.save(right_transparent_buffer, format="PNG", optimize=False)
+                st.download_button(
+                    "⬇️ Download RIGHT transparent PNG",
+                    data=right_transparent_buffer.getvalue(),
+                    file_name="right_player_transparent.png",
+                    mime="image/png",
+                    use_container_width=True,
+                    key="download_cropped_right_transparent_v1",
+                )
+
+    st.subheader("6. Reference Thumbnail Player Extractor")
     st.caption(
         "Upload another cricket thumbnail, crop around each player, and use local rembg segmentation to make transparent PNG cutouts. "
         "This avoids Gemini API calls. Segmentation may leave text or graphics that touch/overlap the player, and it cannot reconstruct hidden pixels. "
         "Use only images you have permission to reuse. Successful extractions are cached for 30 days."
     )
+    st.markdown("**Option A — Load reference thumbnail from an image URL**")
+    reference_thumbnail_url = st.text_input(
+        "Reference thumbnail image URL",
+        placeholder="https://example.com/cricket-thumbnail.jpg",
+        key="reference_thumbnail_image_url",
+        help="Use a direct, publicly accessible image URL ending in JPG, PNG, or WebP. A normal webpage URL may not work.",
+    )
+    if st.button("🌐 Load thumbnail from URL", use_container_width=True, key="load_reference_thumbnail_url"):
+        if not reference_thumbnail_url.strip():
+            st.warning("Paste a direct thumbnail image URL first.")
+        else:
+            with st.spinner("Fetching reference thumbnail from URL…"):
+                fetched_reference = fetch_online_image(reference_thumbnail_url.strip())
+            if fetched_reference is None:
+                st.error("Could not load that URL as an image. Use a direct, public JPG/PNG/WebP image URL, not a webpage or a private/expired link.")
+            else:
+                ref_buffer = io.BytesIO()
+                fetched_reference.convert("RGB").save(ref_buffer, format="PNG")
+                st.session_state["reference_thumbnail_url_bytes"] = ref_buffer.getvalue()
+                st.session_state["reference_thumbnail_url_name"] = "reference_thumbnail_from_url.png"
+                st.session_state["reference_thumbnail_url_loaded"] = reference_thumbnail_url.strip()
+                st.session_state["reference_thumbnail_hash"] = None
+                st.session_state["reference_left_cutout"] = None
+                st.session_state["reference_right_cutout"] = None
+                st.success("Reference thumbnail loaded. Adjust the crop sliders, then extract both players.")
+
+    st.markdown("**Option B — Upload a reference thumbnail file**")
     reference_thumbnail = st.file_uploader(
         "Upload reference thumbnail (PNG/JPG/WebP)",
         type=["png", "jpg", "jpeg", "webp"],
         key="reference_thumbnail_upload",
     )
+    # Uploaded file takes priority. Otherwise use the image previously loaded from URL.
+    if reference_thumbnail is not None:
+        reference_thumbnail_bytes = reference_thumbnail.getvalue()
+        reference_thumbnail_name = reference_thumbnail.name
+    else:
+        reference_thumbnail_bytes = st.session_state.get("reference_thumbnail_url_bytes")
+        reference_thumbnail_name = st.session_state.get("reference_thumbnail_url_name", "reference_thumbnail_from_url.png")
+
     use_reference_cutouts = st.checkbox(
         "Use extracted reference players in my PREET SPORTS thumbnail",
         value=True,
         key="use_reference_cutouts_checkbox",
     )
-    if reference_thumbnail is not None:
-        ref_bytes = reference_thumbnail.getvalue()
+    if reference_thumbnail_bytes is not None:
+        ref_bytes = reference_thumbnail_bytes
         ref_hash = hashlib.sha1(ref_bytes).hexdigest()
         if st.session_state.get("reference_thumbnail_hash") != ref_hash:
             st.session_state["reference_thumbnail_hash"] = ref_hash
@@ -1433,11 +1546,18 @@ with col_left:
                     key="download_ref_right_crop_only",
                 )
 
+            extract_both_clicked = st.button(
+                "✂️ Extract BOTH players & apply to thumbnail",
+                use_container_width=True,
+                type="primary",
+                key="extract_reference_both_apply",
+                help="Removes both backgrounds locally and assigns the cutouts directly to the left/right thumbnail slots. No PNG download is needed.",
+            )
             extract_col1, extract_col2 = st.columns(2)
             with extract_col1:
-                extract_left_clicked = st.button("✂️ Extract LEFT player", use_container_width=True, key="extract_reference_left")
+                extract_left_clicked = st.button("✂️ Extract LEFT only", use_container_width=True, key="extract_reference_left")
             with extract_col2:
-                extract_right_clicked = st.button("✂️ Extract RIGHT player", use_container_width=True, key="extract_reference_right")
+                extract_right_clicked = st.button("✂️ Extract RIGHT only", use_container_width=True, key="extract_reference_right")
 
             def _crop_jpeg_bytes(crop):
                 # Convert crop to a compact local-model input. No API request is made.
@@ -1449,6 +1569,38 @@ with col_left:
                 crop_rgb.save(buf, format="JPEG", quality=94, optimize=True)
                 return buf.getvalue()
 
+            if extract_both_clicked:
+                # Process each side locally and assign the results directly to the
+                # thumbnail slots. The user does not need to download/re-upload PNGs.
+                left_cutout = right_cutout = None
+                left_error = right_error = None
+                with st.spinner("Extracting both players locally and applying them to your thumbnail…"):
+                    left_cutout, left_error = remove_background_from_any_image(
+                        _crop_jpeg_bytes(ref_left_crop), "reference_left_player.jpg"
+                    )
+                    right_cutout, right_error = remove_background_from_any_image(
+                        _crop_jpeg_bytes(ref_right_crop), "reference_right_player.jpg"
+                    )
+                if left_cutout is not None:
+                    st.session_state["reference_left_cutout"] = left_cutout
+                    st.session_state.p1_cutout = left_cutout
+                    st.session_state.p1_ai_front = None
+                    st.session_state.p1_ai_source_hash = None
+                if right_cutout is not None:
+                    st.session_state["reference_right_cutout"] = right_cutout
+                    st.session_state.p2_cutout = right_cutout
+                    st.session_state.p2_ai_front = None
+                    st.session_state.p2_ai_source_hash = None
+                if left_cutout is not None and right_cutout is not None:
+                    st.success("Both players extracted and applied! Scroll to the 4K preview below; no PNG download or re-upload was needed.")
+                else:
+                    if left_error:
+                        st.error(f"Left player: {left_error}")
+                    if right_error:
+                        st.error(f"Right player: {right_error}")
+                    if left_cutout is not None or right_cutout is not None:
+                        st.warning("The successful player cutout has been applied. Fix the other crop and try again.")
+
             if extract_left_clicked:
                 with st.spinner("Removing the left crop background locally… no Gemini API call is made."):
                     cutout, extract_error = remove_background_from_any_image(
@@ -1457,7 +1609,9 @@ with col_left:
                 if cutout is not None:
                     st.session_state["reference_left_cutout"] = cutout
                     st.session_state.p1_cutout = cutout
-                    st.success("Left player extracted. It is ready to use in the thumbnail.")
+                    st.session_state.p1_ai_front = None
+                    st.session_state.p1_ai_source_hash = None
+                    st.success("Left player extracted and applied to the thumbnail. No download needed.")
                 else:
                     st.error(extract_error or "Could not extract the left player.")
 
@@ -1469,7 +1623,9 @@ with col_left:
                 if cutout is not None:
                     st.session_state["reference_right_cutout"] = cutout
                     st.session_state.p2_cutout = cutout
-                    st.success("Right player extracted. It is ready to use in the thumbnail.")
+                    st.session_state.p2_ai_front = None
+                    st.session_state.p2_ai_source_hash = None
+                    st.success("Right player extracted and applied to the thumbnail. No download needed.")
                 else:
                     st.error(extract_error or "Could not extract the right player.")
 
@@ -1495,8 +1651,9 @@ with col_left:
             st.error(f"Could not read the reference thumbnail: {exc}")
     else:
         use_reference_cutouts = False
+        st.caption("Load a thumbnail using the URL option above or upload an image file to enable player extraction.")
 
-    st.subheader("6. Background (optional override)")
+    st.subheader("7. Background (optional override)")
     stadium_url = st.text_input(
         "Custom Stadium Background URL",
         value="",
@@ -1504,7 +1661,7 @@ with col_left:
         key="stadium_background_url",
     )
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
-    st.subheader("7. Optional AI Tool — Front-Facing Pose Conversion")
+    st.subheader("8. Optional AI Tool — Front-Facing Pose Conversion")
     st.info(
         "Everything else in this app—cropping, local background removal, cutout caching, thumbnail composition, and 4K PNG export—runs locally on this server and does not call Gemini. "
         "Only the Convert LEFT/RIGHT buttons below call Gemini. Pose conversion needs a configured GEMINI_API_KEY and available image-model quota; it may incur separate API charges. "
