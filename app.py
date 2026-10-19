@@ -1,10 +1,12 @@
 import io
 import base64
+import gc
 import hashlib
 import json
 import os
 import re
 from urllib.parse import urlsplit, urlunsplit, urljoin
+from pathlib import Path
 
 import requests
 import numpy as np
@@ -20,7 +22,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v17-fast-u2netp-cached-extraction"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v20-preloaded-u2netp-512"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -374,16 +376,25 @@ def _remove_magenta_chroma_background(image):
 
 @st.cache_resource(show_spinner=False)
 def get_local_rembg_session():
-    """Create one reusable CPU segmentation session per Streamlit process."""
+    """Create one reusable CPU segmentation session and use the build-time model cache."""
     try:
+        # Keep model weights in the project directory so the optional Render build
+        # preloader and runtime app use exactly the same location.
+        model_home = Path(
+            os.environ.get("PREET_REMBG_HOME")
+            or os.environ.get("U2NET_HOME")
+            or str(Path(__file__).resolve().parent / ".preet_models" / "u2net")
+        )
+        model_home.mkdir(parents=True, exist_ok=True)
+        # Force runtime and build-preloader to use the same model cache directory.
+        os.environ["U2NET_HOME"] = str(model_home)
         from rembg import new_session
     except ImportError as exc:
         raise RuntimeError(
             "Local background removal is not installed. Add `rembg[cpu]` to requirements.txt and redeploy."
         ) from exc
-    # u2netp is the lightweight U²-Net model. It is much smaller and generally
-    # faster on Render's CPU-only instances than the full u2net model. The first
-    # call may download weights; this session is reused for subsequent extractions.
+    # u2netp is the compact model. preload_rembg_model.py downloads weights during
+    # Render's build so the first user click does not have to wait for network I/O.
     model_name = os.environ.get("REMBG_MODEL", "u2netp").strip() or "u2netp"
     return new_session(model_name)
 
@@ -425,10 +436,13 @@ def remove_background_from_any_image(upload_bytes, filename="image", subject_ins
         with Image.open(io.BytesIO(upload_bytes)) as opened:
             opened.load()
             source = opened.convert("RGBA")
-            # Keep CPU inference responsive. The final thumbnail is still rendered
-            # at 3840x2160; segmentation works on this resized source and is cached.
-            if max(source.size) > 1200:
-                scale = 1200 / max(source.size)
+            # Keep CPU inference responsive on small Render instances. The final
+            # thumbnail is still rendered at 3840x2160; the segmentation result is
+            # cached and scaled naturally when composing the final thumbnail.
+            max_side = int(os.environ.get("REMBG_MAX_SIDE", "640"))
+            max_side = max(512, min(max_side, 960))
+            if max(source.size) > max_side:
+                scale = max_side / max(source.size)
                 source = source.resize(
                     (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
                     Image.Resampling.LANCZOS,
@@ -1220,6 +1234,10 @@ st.caption("Sharper, slightly larger player portraits; oversized LIVE; compact m
 for key in ["p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front", "p1_ai_source_hash", "p2_ai_source_hash", "t1_code", "t2_code", "auto_bg", "reference_left_cutout", "reference_right_cutout", "reference_thumbnail_hash"]:
     if key not in st.session_state:
         st.session_state[key] = None
+if "_reference_pending_extractions" not in st.session_state:
+    st.session_state["_reference_pending_extractions"] = []
+if "_reference_extraction_messages" not in st.session_state:
+    st.session_state["_reference_extraction_messages"] = []
 
 col_left, col_right = st.columns([1, 1.2], gap="large")
 
@@ -1317,8 +1335,9 @@ with col_left:
 
     st.subheader("4. Remove Background from Any Image")
     st.caption(
-        "Local background removal uses the lightweight rembg u2netp model by default and does not consume Gemini API quota. "
-        "The first run may take longer while the segmentation model initializes; successful results are cached for 30 days."
+        "Local background removal uses the lightweight rembg u2netp model and does not consume Gemini API quota. "
+        "For a fast first click on Render, add `python preload_rembg_model.py` to the Build Command after installing requirements. "
+        "Player crops are reduced to 512 px for segmentation and successful results are cached for 30 days."
     )
     any_image_upload = st.file_uploader(
         "Choose any image to remove its background",
@@ -1329,7 +1348,7 @@ with col_left:
         if not any_image_upload:
             st.warning("Upload an image first.")
         else:
-            with st.spinner("Removing background locally… first run may initialize the segmentation model."):
+            with st.spinner("Removing background locally… cached results are fast; first use may initialize the model."):
                 transparent_result, bg_remove_error = remove_background_from_any_image(
                     any_image_upload.getvalue(), any_image_upload.name
                 )
@@ -1440,7 +1459,8 @@ with col_left:
     st.subheader("6. Reference Thumbnail Player Extractor")
     st.caption(
         "Upload another cricket thumbnail, crop around each player, and use local rembg segmentation to make transparent PNG cutouts. "
-        "This avoids Gemini API calls. Segmentation may leave text or graphics that touch/overlap the player, and it cannot reconstruct hidden pixels. "
+        "This avoids Gemini API calls. Players are processed one at a time to reduce memory use and help avoid Render 502 disconnects. "
+        "Segmentation may leave text or graphics that touch/overlap the player, and it cannot reconstruct hidden pixels. "
         "Use only images you have permission to reuse. Successful extractions are cached for 30 days."
     )
     st.markdown("**Option A — Load reference thumbnail from an image URL**")
@@ -1479,9 +1499,16 @@ with col_left:
     if reference_thumbnail is not None:
         reference_thumbnail_bytes = reference_thumbnail.getvalue()
         reference_thumbnail_name = reference_thumbnail.name
+        # Keep uploaded bytes in this user's Streamlit session so normal reruns and
+        # transient websocket reconnects don't discard the source image.
+        st.session_state["reference_thumbnail_uploaded_bytes"] = reference_thumbnail_bytes
+        st.session_state["reference_thumbnail_uploaded_name"] = reference_thumbnail_name
     else:
         reference_thumbnail_bytes = st.session_state.get("reference_thumbnail_url_bytes")
         reference_thumbnail_name = st.session_state.get("reference_thumbnail_url_name", "reference_thumbnail_from_url.png")
+        if reference_thumbnail_bytes is None:
+            reference_thumbnail_bytes = st.session_state.get("reference_thumbnail_uploaded_bytes")
+            reference_thumbnail_name = st.session_state.get("reference_thumbnail_uploaded_name", "reference_thumbnail_recovered.png")
 
     use_reference_cutouts = st.checkbox(
         "Use extracted reference players in my PREET SPORTS thumbnail",
@@ -1566,86 +1593,91 @@ with col_left:
             def _crop_jpeg_bytes(crop):
                 # Convert crop to a compact local-model input. No API request is made.
                 crop_rgb = crop.convert("RGB")
-                if max(crop_rgb.size) > 1200:
-                    scale = 1200 / max(crop_rgb.size)
+                max_side = int(os.environ.get("REMBG_CROP_MAX_SIDE", "512"))
+                max_side = max(384, min(max_side, 768))
+                if max(crop_rgb.size) > max_side:
+                    scale = max_side / max(crop_rgb.size)
                     crop_rgb = crop_rgb.resize((max(1, int(crop_rgb.width * scale)), max(1, int(crop_rgb.height * scale))), Image.Resampling.LANCZOS)
                 buf = io.BytesIO()
-                crop_rgb.save(buf, format="JPEG", quality=91, optimize=False)
+                crop_rgb.save(buf, format="JPEG", quality=84, optimize=False)
                 return buf.getvalue()
 
+            def _queue_reference_extraction(side, crop):
+                # Persist compact crop bytes in Session State. Process one crop per
+                # Streamlit run to lower peak RAM and avoid a single long request
+                # that can cause a Render 502/disconnect.
+                return {
+                    "side": side,
+                    "source_bytes": _crop_jpeg_bytes(crop),
+                    "filename": f"reference_{side}_player.jpg",
+                }
+
             if extract_both_clicked:
-                # Process each side locally and assign the results directly to the
-                # thumbnail slots. The user does not need to download/re-upload PNGs.
-                left_cutout = right_cutout = None
-                left_error = right_error = None
-                # Show progress rather than one long spinner. The first extraction
-                # can take longer while Render downloads the small u2netp model;
-                # repeat crops are cached for 30 days and should be much faster.
-                extraction_progress = st.progress(0, text="Preparing fast local model… first run may take longer")
-                with st.status("Extracting players locally…", expanded=True) as extraction_status:
-                    extraction_status.write("Step 1 of 2 — removing the left background")
-                    left_cutout, left_error = remove_background_from_any_image(
-                        _crop_jpeg_bytes(ref_left_crop), "reference_left_player.jpg"
-                    )
-                    extraction_progress.progress(50, text="Left player processed; preparing right player…")
-                    extraction_status.write("Step 2 of 2 — removing the right background")
-                    right_cutout, right_error = remove_background_from_any_image(
-                        _crop_jpeg_bytes(ref_right_crop), "reference_right_player.jpg"
-                    )
-                    extraction_progress.progress(100, text="Extraction finished")
-                    extraction_status.update(
-                        label="Both player extraction attempts finished",
-                        state="complete" if left_cutout is not None and right_cutout is not None else "error",
-                        expanded=False,
-                    )
-                extraction_progress.empty()
-                if left_cutout is not None:
-                    st.session_state["reference_left_cutout"] = left_cutout
-                    st.session_state.p1_cutout = left_cutout
-                    st.session_state.p1_ai_front = None
-                    st.session_state.p1_ai_source_hash = None
-                if right_cutout is not None:
-                    st.session_state["reference_right_cutout"] = right_cutout
-                    st.session_state.p2_cutout = right_cutout
-                    st.session_state.p2_ai_front = None
-                    st.session_state.p2_ai_source_hash = None
-                if left_cutout is not None and right_cutout is not None:
-                    st.success("Both players extracted and applied! Scroll to the 4K preview below; no PNG download or re-upload was needed.")
-                else:
-                    if left_error:
-                        st.error(f"Left player: {left_error}")
-                    if right_error:
-                        st.error(f"Right player: {right_error}")
-                    if left_cutout is not None or right_cutout is not None:
-                        st.warning("The successful player cutout has been applied. Fix the other crop and try again.")
+                st.session_state["_reference_pending_extractions"] = [
+                    _queue_reference_extraction("left", ref_left_crop),
+                    _queue_reference_extraction("right", ref_right_crop),
+                ]
+                st.session_state["_reference_extraction_messages"] = []
+                st.rerun()
+            elif extract_left_clicked:
+                st.session_state["_reference_pending_extractions"] = [
+                    _queue_reference_extraction("left", ref_left_crop)
+                ]
+                st.session_state["_reference_extraction_messages"] = []
+                st.rerun()
+            elif extract_right_clicked:
+                st.session_state["_reference_pending_extractions"] = [
+                    _queue_reference_extraction("right", ref_right_crop)
+                ]
+                st.session_state["_reference_extraction_messages"] = []
+                st.rerun()
 
-            if extract_left_clicked:
-                with st.spinner("Removing the left crop background locally… no Gemini API call is made."):
+            # Handle exactly one rembg inference per request. After each inference,
+            # save its result in session state and rerun so the expensive model
+            # intermediates are released before the next player or 4K composition.
+            pending_extractions = st.session_state.get("_reference_pending_extractions", [])
+            if pending_extractions:
+                task = pending_extractions[0]
+                st.session_state["_reference_pending_extractions"] = pending_extractions[1:]
+                side = task["side"]
+                with st.spinner(
+                    f"Removing {side} player background locally… using the cached lightweight model where available. "
+                    "The crop is reduced to 512 px for faster segmentation."
+                ):
                     cutout, extract_error = remove_background_from_any_image(
-                        _crop_jpeg_bytes(ref_left_crop), "reference_left_player.jpg"
+                        task["source_bytes"], task.get("filename", f"reference_{side}_player.jpg")
                     )
-                if cutout is not None:
-                    st.session_state["reference_left_cutout"] = cutout
-                    st.session_state.p1_cutout = cutout
-                    st.session_state.p1_ai_front = None
-                    st.session_state.p1_ai_source_hash = None
-                    st.success("Left player extracted and applied to the thumbnail. No download needed.")
-                else:
-                    st.error(extract_error or "Could not extract the left player.")
 
-            if extract_right_clicked:
-                with st.spinner("Removing the right crop background locally… no Gemini API call is made."):
-                    cutout, extract_error = remove_background_from_any_image(
-                        _crop_jpeg_bytes(ref_right_crop), "reference_right_player.jpg"
-                    )
+                messages = st.session_state.setdefault("_reference_extraction_messages", [])
                 if cutout is not None:
-                    st.session_state["reference_right_cutout"] = cutout
-                    st.session_state.p2_cutout = cutout
-                    st.session_state.p2_ai_front = None
-                    st.session_state.p2_ai_source_hash = None
-                    st.success("Right player extracted and applied to the thumbnail. No download needed.")
+                    if side == "left":
+                        st.session_state["reference_left_cutout"] = cutout
+                        st.session_state.p1_cutout = cutout
+                        st.session_state.p1_ai_front = None
+                        st.session_state.p1_ai_source_hash = None
+                    else:
+                        st.session_state["reference_right_cutout"] = cutout
+                        st.session_state.p2_cutout = cutout
+                        st.session_state.p2_ai_front = None
+                        st.session_state.p2_ai_source_hash = None
+                    messages.append(f"{side.title()} player extracted and applied to the thumbnail.")
                 else:
-                    st.error(extract_error or "Could not extract the right player.")
+                    messages.append(f"{side.title()} player extraction failed: {extract_error or 'Unknown local segmentation error.'}")
+
+                # Release local inference/result buffers before next queued crop or
+                # the 4K renderer. rembg model session itself remains cached.
+                del cutout
+                gc.collect()
+                if st.session_state.get("_reference_pending_extractions"):
+                    st.rerun()
+                # Run one more clean pass before rendering the large 4K thumbnail.
+                st.rerun()
+
+            for extraction_message in st.session_state.get("_reference_extraction_messages", []):
+                if "extraction failed:" in extraction_message.lower():
+                    st.error(extraction_message)
+                else:
+                    st.success(extraction_message)
 
             saved_left, saved_right = st.columns(2)
             with saved_left:
