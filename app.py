@@ -20,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v14-reference-player-extractor"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v16-local-first-no-gemini-crop-bg-thumbnail"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -372,111 +372,87 @@ def _remove_magenta_chroma_background(image):
     return image
 
 
-def remove_background_from_any_image(upload_bytes, filename="image", subject_instruction=None):
-    """Use Gemini image editing to isolate the main foreground subject on transparency.
+@st.cache_resource(show_spinner=False)
+def get_local_rembg_session():
+    """Create one reusable CPU segmentation session per Streamlit process."""
+    try:
+        from rembg import new_session
+    except ImportError as exc:
+        raise RuntimeError(
+            "Local background removal is not installed. Add `rembg[cpu]` to requirements.txt and redeploy."
+        ) from exc
+    # u2net is a general-purpose foreground segmentation model. The first use may
+    # download its model weights; subsequent requests reuse this session.
+    return new_session("u2net")
 
-    Works with ordinary uploaded photos, products, people, pets, objects and logos.
-    Gemini is asked for a uniform magenta backing, which is converted to alpha locally.
-    Returns (PIL.Image in RGBA mode or None, error message or None).
-    """
-    api_key = get_gemini_api_key()
-    if not api_key:
-        return None, (
-            "Background removal is not configured. Add GEMINI_API_KEY in Render → Environment. "
-            "Gemini API calls may be billed separately from your Gemini Pro subscription."
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 24 * 30, max_entries=64)
+def _remove_background_png_cached(source_bytes):
+    """Run local rembg once per unique image and cache the successful PNG bytes."""
+    from rembg import remove
+    session = get_local_rembg_session()
+    result_bytes = remove(source_bytes, session=session, force_return_bytes=True)
+    # Validate and normalize output before caching it.
+    with Image.open(io.BytesIO(result_bytes)) as opened:
+        opened.load()
+        result = opened.convert("RGBA")
+    alpha = result.getchannel("A")
+    bbox = alpha.getbbox()
+    if bbox:
+        # Tight crop with a small transparent margin to avoid clipping hair/edges.
+        left, top, right, bottom = bbox
+        pad = max(4, int(max(result.size) * 0.012))
+        bbox = (
+            max(0, left - pad), max(0, top - pad),
+            min(result.width, right + pad), min(result.height, bottom + pad),
         )
+        result = result.crop(bbox)
+    output = io.BytesIO()
+    result.save(output, format="PNG", optimize=False, compress_level=3)
+    return output.getvalue()
 
+
+def remove_background_from_any_image(upload_bytes, filename="image", subject_instruction=None):
+    """Remove an image background locally with rembg; no Gemini API call is made.
+
+    Returns (PIL.Image in RGBA mode or None, error message or None). `subject_instruction`
+    is retained for compatibility with the reference-player extractor, but local
+    segmentation does not interpret natural-language instructions.
+    """
     try:
         with Image.open(io.BytesIO(upload_bytes)) as opened:
             opened.load()
             source = opened.convert("RGBA")
-            if max(source.size) > 1600:
-                scale = 1600 / max(source.size)
+            if max(source.size) > 1800:
+                scale = 1800 / max(source.size)
                 source = source.resize(
                     (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
                     Image.Resampling.LANCZOS,
                 )
-            has_alpha = source.getchannel("A").getextrema()[0] < 250
-            source_buffer = io.BytesIO()
-            if has_alpha:
-                source.save(source_buffer, format="PNG", optimize=False, compress_level=3)
-                mime_type = "image/png"
-            else:
-                source.convert("RGB").save(source_buffer, format="JPEG", quality=92, optimize=True)
-                mime_type = "image/jpeg"
-            source_bytes = source_buffer.getvalue()
+            source_buf = io.BytesIO()
+            source.save(source_buf, format="PNG", optimize=False, compress_level=3)
+            normalized_bytes = source_buf.getvalue()
     except Exception as exc:
         return None, f"Could not read the uploaded image: {exc}"
 
-    base_prompt = (
-        "Perform a precise background-removal edit on the supplied image. Identify and preserve the main "
-        "foreground subject or object exactly as shown, including fine edges such as hair, fur, feathers, "
-        "transparent product edges, and small details. Remove the entire original background, including "
-        "scenery, room, sky, floor, shadows that belong to the background, and unrelated objects. Do not "
-        "redraw, beautify, recolor, reshape, crop, or replace the main subject. Preserve its identity, pose, "
-        "proportions, clothing, logos, text, and colors. If there are multiple clearly intended foreground "
-        "subjects, keep all of them. Keep the subject fully inside the image with a small margin. Do not add "
-        "new objects, text, borders, or watermarks. For reliable background extraction, place the preserved "
-        "subject on a perfectly flat, uniform pure magenta background RGB(255, 0, 255), edge to edge; no "
-        "gradient, texture, scenery, cast shadow, or magenta rim light. Magenta must only appear in empty "
-        "background pixels, never on the subject. Return one edited image."
-    )
-    prompt = (str(subject_instruction).strip() + "\n\n" + base_prompt) if subject_instruction else base_prompt
-    request_body = {
-        "model": os.environ.get("GEMINI_IMAGE_MODEL", "gemini-nano-banana-2.1").strip(),
-        "input": [
-            {"type": "text", "text": prompt},
-            {"type": "image", "data": base64.b64encode(source_bytes).decode("ascii"), "mime_type": mime_type},
-        ],
-        "response_format": {"type": "image", "mime_type": "image/jpeg", "image_size": "2K"},
-    }
     try:
-        response = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/interactions",
-            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json=request_body,
-            timeout=(15, 240),
-        )
-        if response.status_code >= 400:
-            detail = ""
-            try:
-                err_json = response.json()
-                err = err_json.get("error", {}) if isinstance(err_json, dict) else {}
-                detail = err.get("message", "") if isinstance(err, dict) else str(err)
-            except Exception:
-                detail = response.text[:500]
-            if response.status_code in (401, 403):
-                return None, f"Gemini API key or permissions rejected (HTTP {response.status_code}). {detail}".strip()
-            if response.status_code == 429:
-                return None, f"Gemini API quota/rate limit reached (HTTP 429). Check AI Studio billing/usage. {detail}".strip()
-            return None, f"Gemini background removal failed (HTTP {response.status_code}). {detail}".strip()
-
-        payload = response.json()
-        image_block = _find_gemini_image_block(payload)
-        if not image_block or not image_block.get("data"):
-            return None, "Gemini returned no image. Try a clearer image or another file format."
-        result_bytes = base64.b64decode(image_block["data"])
+        result_bytes = _remove_background_png_cached(normalized_bytes)
         with Image.open(io.BytesIO(result_bytes)) as output_image:
             output_image.load()
             result = output_image.convert("RGBA")
-        result = _remove_magenta_chroma_background(result)
-        # Trim only transparent outside margins; leave a small safety margin around the subject.
-        alpha = result.getchannel("A")
-        bbox = alpha.getbbox()
-        if bbox:
-            subject = result.crop(bbox)
-            pad = max(8, int(max(subject.size) * 0.015))
-            trimmed = Image.new("RGBA", (subject.width + 2 * pad, subject.height + 2 * pad), (0, 0, 0, 0))
-            trimmed.alpha_composite(subject, (pad, pad))
-            result = trimmed
+        if result.getchannel("A").getextrema() == (255, 255):
+            return None, (
+                "The local segmentation model did not find a transparent foreground. "
+                "Try a clearer image with the subject separated from the background."
+            )
         return result, None
-    except requests.Timeout:
-        return None, "Gemini background removal timed out. Try a smaller image or retry."
-    except requests.RequestException as exc:
-        return None, f"Could not reach the Gemini image-edit API: {exc}"
+    except RuntimeError as exc:
+        return None, str(exc)
     except Exception as exc:
-        return None, f"Background removal failed: {exc}"
-
+        return None, (
+            f"Local background removal failed: {exc}. Check that rembg[cpu] and its model "
+            "dependencies are installed in Render. No Gemini request was made."
+        )
 
 def convert_player_to_front_facing(upload_bytes, filename, side):
     """Use Gemini Nano Banana to edit a cricket photo into a front-facing cutout.
@@ -1337,8 +1313,8 @@ with col_left:
 
     st.subheader("4. Remove Background from Any Image")
     st.caption(
-        "Upload a photo, person, product, pet, object, or logo. Gemini attempts to isolate the foreground "
-        "and return a transparent PNG. Requires GEMINI_API_KEY in Render Environment; API usage may be billed separately."
+        "Local background removal uses rembg (U²-Net) and does not consume Gemini API quota. "
+        "The first run may take longer while the segmentation model initializes; successful results are cached for 30 days."
     )
     any_image_upload = st.file_uploader(
         "Choose any image to remove its background",
@@ -1349,7 +1325,7 @@ with col_left:
         if not any_image_upload:
             st.warning("Upload an image first.")
         else:
-            with st.spinner("Gemini is removing the background. This may take a little while…"):
+            with st.spinner("Removing background locally… first run may initialize the segmentation model."):
                 transparent_result, bg_remove_error = remove_background_from_any_image(
                     any_image_upload.getvalue(), any_image_upload.name
                 )
@@ -1381,9 +1357,9 @@ with col_left:
 
     st.subheader("5. Reference Thumbnail Player Extractor")
     st.caption(
-        "Upload another cricket thumbnail, crop around each player, and ask Gemini to isolate the player into a transparent PNG. "
-        "The source is a flattened image, so text or graphics covering a player may not be perfectly recoverable. "
-        "Use only images you have permission to reuse."
+        "Upload another cricket thumbnail, crop around each player, and use local rembg segmentation to make transparent PNG cutouts. "
+        "This avoids Gemini API calls. Segmentation may leave text or graphics that touch/overlap the player, and it cannot reconstruct hidden pixels. "
+        "Use only images you have permission to reuse. Successful extractions are cached for 30 days."
     )
     reference_thumbnail = st.file_uploader(
         "Upload reference thumbnail (PNG/JPG/WebP)",
@@ -1434,8 +1410,28 @@ with col_left:
             crop_prev1, crop_prev2 = st.columns(2)
             with crop_prev1:
                 st.image(ref_left_crop, caption="Left crop preview", use_container_width=True)
+                left_crop_buffer = io.BytesIO()
+                ref_left_crop.save(left_crop_buffer, format="PNG")
+                st.download_button(
+                    "Download LEFT crop only (local)",
+                    data=left_crop_buffer.getvalue(),
+                    file_name="reference_left_crop.png",
+                    mime="image/png",
+                    use_container_width=True,
+                    key="download_ref_left_crop_only",
+                )
             with crop_prev2:
                 st.image(ref_right_crop, caption="Right crop preview", use_container_width=True)
+                right_crop_buffer = io.BytesIO()
+                ref_right_crop.save(right_crop_buffer, format="PNG")
+                st.download_button(
+                    "Download RIGHT crop only (local)",
+                    data=right_crop_buffer.getvalue(),
+                    file_name="reference_right_crop.png",
+                    mime="image/png",
+                    use_container_width=True,
+                    key="download_ref_right_crop_only",
+                )
 
             extract_col1, extract_col2 = st.columns(2)
             with extract_col1:
@@ -1444,7 +1440,7 @@ with col_left:
                 extract_right_clicked = st.button("✂️ Extract RIGHT player", use_container_width=True, key="extract_reference_right")
 
             def _crop_jpeg_bytes(crop):
-                # JPEG is used as the Gemini input because the image endpoint requires image/jpeg output.
+                # Convert crop to a compact local-model input. No API request is made.
                 crop_rgb = crop.convert("RGB")
                 if max(crop_rgb.size) > 1500:
                     scale = 1500 / max(crop_rgb.size)
@@ -1454,15 +1450,9 @@ with col_left:
                 return buf.getvalue()
 
             if extract_left_clicked:
-                instruction = (
-                    "This crop comes from a cricket YouTube thumbnail. Isolate ONLY the main cricket player on the LEFT side of this crop. "
-                    "Preserve the person's actual facial features, hair, pose, skin tone, jersey and visible uniform details as faithfully as possible. "
-                    "Remove stadium scenery, all thumbnail typography, LIVE labels, team banners, flags, watermarks and other graphic elements. "
-                    "Do not invent missing body parts or change the person's face. Keep the full visible head, shoulders and torso; transparent cutout is intended for a new thumbnail."
-                )
-                with st.spinner("Gemini is extracting the left player…"):
+                with st.spinner("Removing the left crop background locally… no Gemini API call is made."):
                     cutout, extract_error = remove_background_from_any_image(
-                        _crop_jpeg_bytes(ref_left_crop), "reference_left_player.jpg", subject_instruction=instruction
+                        _crop_jpeg_bytes(ref_left_crop), "reference_left_player.jpg"
                     )
                 if cutout is not None:
                     st.session_state["reference_left_cutout"] = cutout
@@ -1472,15 +1462,9 @@ with col_left:
                     st.error(extract_error or "Could not extract the left player.")
 
             if extract_right_clicked:
-                instruction = (
-                    "This crop comes from a cricket YouTube thumbnail. Isolate ONLY the main cricket player on the RIGHT side of this crop. "
-                    "Preserve the person's actual facial features, hair, pose, skin tone, jersey and visible uniform details as faithfully as possible. "
-                    "Remove stadium scenery, all thumbnail typography, LIVE labels, team banners, flags, watermarks and other graphic elements. "
-                    "Do not invent missing body parts or change the person's face. Keep the full visible head, shoulders and torso; transparent cutout is intended for a new thumbnail."
-                )
-                with st.spinner("Gemini is extracting the right player…"):
+                with st.spinner("Removing the right crop background locally… no Gemini API call is made."):
                     cutout, extract_error = remove_background_from_any_image(
-                        _crop_jpeg_bytes(ref_right_crop), "reference_right_player.jpg", subject_instruction=instruction
+                        _crop_jpeg_bytes(ref_right_crop), "reference_right_player.jpg"
                     )
                 if cutout is not None:
                     st.session_state["reference_right_cutout"] = cutout
@@ -1520,11 +1504,11 @@ with col_left:
         key="stadium_background_url",
     )
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
-    st.subheader("6. Upload Player Photos — AI Front-Facing Pose")
-    st.caption(
-        "Upload a side-facing photo and press Convert. Gemini Nano Banana will attempt to turn the head and shoulders toward camera. "
-        "The app requests a magenta background and removes it to create a player cutout. Add GEMINI_API_KEY in Render Environment; "
-        "API use may be billed separately from Gemini Pro, and identity/uniform details should be checked."
+    st.subheader("7. Optional AI Tool — Front-Facing Pose Conversion")
+    st.info(
+        "Everything else in this app—cropping, local background removal, cutout caching, thumbnail composition, and 4K PNG export—runs locally on this server and does not call Gemini. "
+        "Only the Convert LEFT/RIGHT buttons below call Gemini. Pose conversion needs a configured GEMINI_API_KEY and available image-model quota; it may incur separate API charges. "
+        "If Gemini is unavailable, continue using the local crop, background-removal, and thumbnail tools."
     )
     col_up1, col_up2 = st.columns(2)
     with col_up1:
@@ -1754,4 +1738,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("AI front-facing conversion uses Gemini Nano Banana only when you press a Convert button. Set GEMINI_API_KEY in Render → Environment first. Gemini API use may be billed separately from your Gemini Pro subscription. Inspect generated portraits for identity/uniform accuracy. The downloaded PNG is rendered at 3840 × 2160.")
+st.caption("LOCAL-FIRST: cropping, background removal (rembg/U²-Net), cached cutouts, composition, and 3840 × 2160 PNG export run locally without Gemini API calls. Gemini is used only when you explicitly press a front-facing pose conversion button. Local segmentation may leave overlapping text/graphics and cannot reconstruct hidden pixels.")
