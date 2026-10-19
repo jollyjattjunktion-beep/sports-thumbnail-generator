@@ -1410,12 +1410,15 @@ with col_left:
             crop_left_col, crop_right_col = st.columns(2)
             with crop_left_col:
                 st.markdown("**Left player crop**")
-                left_x_range = st.slider("Horizontal range (%) — left", 0, 100, (0, 52), key="ref_left_x_range")
-                left_y_range = st.slider("Vertical range (%) — left", 0, 100, (5, 100), key="ref_left_y_range")
+                # Reference-thumbnail defaults: keep the left player on the left third,
+                # exclude most of the central LIVE/text area, and include the full torso.
+                # Versioned widget keys reset previously saved slider positions on deploy.
+                left_x_range = st.slider("Horizontal range (%) — left", 0, 100, (0, 38), key="ref_left_x_range_v2")
+                left_y_range = st.slider("Vertical range (%) — left", 0, 100, (8, 100), key="ref_left_y_range_v2")
             with crop_right_col:
                 st.markdown("**Right player crop**")
-                right_x_range = st.slider("Horizontal range (%) — right", 0, 100, (48, 100), key="ref_right_x_range")
-                right_y_range = st.slider("Vertical range (%) — right", 0, 100, (5, 100), key="ref_right_y_range")
+                right_x_range = st.slider("Horizontal range (%) — right", 0, 100, (62, 100), key="ref_right_x_range_v2")
+                right_y_range = st.slider("Vertical range (%) — right", 0, 100, (8, 100), key="ref_right_y_range_v2")
 
             def _reference_crop(image, x_range, y_range):
                 x0 = int(image.width * x_range[0] / 100)
