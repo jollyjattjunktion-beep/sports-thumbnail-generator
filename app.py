@@ -21,7 +21,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v23-local-u2netp-cutout"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v25-cached-model-512-opencv-fallback"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -388,12 +388,11 @@ def _get_local_rembg_session(model_name="u2netp"):
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 24 * 30, max_entries=64)
-def _fast_local_cutout_cached(source_bytes, algorithm_version="rembg-u2netp-primary-v4"):
+def _fast_local_cutout_cached(source_bytes, algorithm_version="cached-u2netp-512-opencv-v6"):
 
-    """Create a transparent cutout using a local U2NETP model first, OpenCV as fallback.
+    """Create a local transparent cutout using cached U2NETP if preloaded, else OpenCV.
 
-    No hosted API is called. The model is intended to be preloaded during the Render
-    build; if it is unavailable, face-guided OpenCV GrabCut is used as a best-effort fallback.
+    No hosted API is called, and model weights are never downloaded during a user request.
     """
     import cv2
 
@@ -417,52 +416,56 @@ def _fast_local_cutout_cached(source_bytes, algorithm_version="rembg-u2netp-prim
 
     original_size = source.size
 
-    # High-quality local person/background segmentation (no hosted API calls).
-    # The U2NETP model is preloaded during Render's build using preload_rembg_model.py.
-    # Keep the model input capped for CPU/RAM-constrained instances, then resize only the
-    # alpha mask back to the source size so transparent PNG edges stay smooth.
-    try:
-        model_side = max(512, min(1200, int(os.environ.get("PREET_REMBG_MAX_SIDE", "1024"))))
-        model_input = source
-        if max(model_input.size) > model_side:
-            model_scale = model_side / float(max(model_input.size))
-            model_input = model_input.resize(
-                (max(1, round(model_input.width * model_scale)), max(1, round(model_input.height * model_scale))),
-                Image.Resampling.LANCZOS,
+    # Use local U2NETP only if its weights already exist on disk. Never download model
+    # weights during a user request: on small Render instances that caused long waits and
+    # HTTP 502 errors. If preloaded weights are missing or inference fails, use OpenCV.
+    model_name = os.environ.get("REMBG_MODEL", "u2netp").strip() or "u2netp"
+    model_home = (
+        os.environ.get("PREET_REMBG_HOME")
+        or os.environ.get("U2NET_HOME")
+        or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".preet_models", "u2net")
+    )
+    weights_exist = os.path.isfile(os.path.join(model_home, f"{model_name}.onnx"))
+    use_rembg = os.environ.get("PREET_ENABLE_REMBG", "1").strip().lower() not in {"0", "false", "no", "off"}
+    if use_rembg and weights_exist:
+        try:
+            # U2NETP at 512px is a practical accuracy/speed compromise for Render CPU.
+            model_side = max(384, min(512, int(os.environ.get("PREET_REMBG_MAX_SIDE", "512"))))
+            model_input = source
+            if max(model_input.size) > model_side:
+                model_scale = model_side / float(max(model_input.size))
+                model_input = model_input.resize(
+                    (max(1, round(model_input.width * model_scale)), max(1, round(model_input.height * model_scale))),
+                    Image.Resampling.LANCZOS,
+                )
+            model_buffer = io.BytesIO()
+            model_input.save(model_buffer, format="PNG", optimize=False)
+            from rembg import remove as rembg_remove
+            local_session = _get_local_rembg_session(model_name)
+            rembg_result_bytes = rembg_remove(
+                model_buffer.getvalue(), session=local_session, alpha_matting=False, post_process_mask=True
             )
-        model_buffer = io.BytesIO()
-        model_input.save(model_buffer, format="PNG", optimize=False)
-        from rembg import remove as rembg_remove
-        model_name = os.environ.get("REMBG_MODEL", "u2netp").strip() or "u2netp"
-        local_session = _get_local_rembg_session(model_name)
-        rembg_result_bytes = rembg_remove(
-            model_buffer.getvalue(),
-            session=local_session,
-            alpha_matting=False,
-            post_process_mask=True,
-        )
-        with Image.open(io.BytesIO(rembg_result_bytes)) as rembg_opened:
-            rembg_result = rembg_opened.convert("RGBA")
-        if rembg_result.size != original_size:
-            rembg_result = rembg_result.resize(original_size, Image.Resampling.LANCZOS)
-        rembg_alpha = rembg_result.getchannel("A")
-        transparent_fraction = float(np.asarray(rembg_alpha, dtype=np.uint8).__lt__(250).mean())
-        if rembg_alpha.getextrema()[0] < 250 and 0.005 < transparent_fraction < 0.97:
-            alpha_bounds = rembg_alpha.point(lambda value: 255 if value > 8 else 0).getbbox()
-            if alpha_bounds:
-                l, t, r, b = alpha_bounds
-                pad = max(3, int(max(rembg_result.size) * 0.008))
-                rembg_result = rembg_result.crop((
-                    max(0, l - pad), max(0, t - pad),
-                    min(rembg_result.width, r + pad), min(rembg_result.height, b + pad),
-                ))
-            rembg_buffer = io.BytesIO()
-            rembg_result.save(rembg_buffer, format="PNG", optimize=False, compress_level=1)
-            return rembg_buffer.getvalue()
-    except Exception:
-        # If the local model isn't installed or cannot initialize, use the no-model
-        # face-guided OpenCV fallback below. The app still never calls Gemini here.
-        pass
+            with Image.open(io.BytesIO(rembg_result_bytes)) as rembg_opened:
+                rembg_result = rembg_opened.convert("RGBA")
+            if rembg_result.size != original_size:
+                rembg_result = rembg_result.resize(original_size, Image.Resampling.LANCZOS)
+            rembg_alpha = rembg_result.getchannel("A")
+            transparent_fraction = float(np.asarray(rembg_alpha, dtype=np.uint8).__lt__(250).mean())
+            if rembg_alpha.getextrema()[0] < 250 and 0.005 < transparent_fraction < 0.97:
+                alpha_bounds = rembg_alpha.point(lambda value: 255 if value > 8 else 0).getbbox()
+                if alpha_bounds:
+                    l, t, r, b = alpha_bounds
+                    pad = max(3, int(max(rembg_result.size) * 0.008))
+                    rembg_result = rembg_result.crop((
+                        max(0, l - pad), max(0, t - pad),
+                        min(rembg_result.width, r + pad), min(rembg_result.height, b + pad),
+                    ))
+                rembg_buffer = io.BytesIO()
+                rembg_result.save(rembg_buffer, format="PNG", optimize=False, compress_level=1)
+                return rembg_buffer.getvalue()
+        except Exception:
+            # Any model/inference failure falls through to OpenCV; don't block the app.
+            pass
 
     max_segmentation_side = int(os.environ.get("PREET_GRABCUT_MAX_SIDE", "512"))
     max_segmentation_side = max(320, min(max_segmentation_side, 640))
@@ -606,10 +609,9 @@ def _fast_local_cutout_cached(source_bytes, algorithm_version="rembg-u2netp-prim
     return output.getvalue()
 
 def remove_background_from_any_image(upload_bytes, filename="image", subject_instruction=None):
-    """Remove the background locally with cached U2NETP, or face-guided OpenCV fallback.
+    """Remove background locally with cached U2NETP when preloaded, else OpenCV GrabCut.
 
-    No hosted AI API is called. Returns (RGBA PIL image or None, error message or None).
-    The optional natural-language instruction is ignored because local segmentation is not prompt-driven.
+    No hosted API is called. Model weights are never downloaded during an app interaction.
     """
     try:
         with Image.open(io.BytesIO(upload_bytes)) as opened:
@@ -639,7 +641,7 @@ def remove_background_from_any_image(upload_bytes, filename="image", subject_ins
         return None, f"Could not read the uploaded image: {exc}"
 
     try:
-        result_bytes = _fast_local_cutout_cached(normalized_bytes, "rembg-u2netp-primary-v4")
+        result_bytes = _fast_local_cutout_cached(normalized_bytes, "cached-u2netp-512-opencv-v6")
         with Image.open(io.BytesIO(result_bytes)) as output_image:
             output_image.load()
             result = output_image.convert("RGBA")
@@ -1515,7 +1517,7 @@ with col_left:
 
     st.subheader("4. Remove Background from Any Image")
     st.caption(
-        "Background removal uses the lightweight local U2NETP segmentation model when available, with face-guided OpenCV GrabCut as a fallback. "
+        "Background removal uses local U2NETP only when weights are already cached; otherwise it quickly falls back to OpenCV GrabCut. "
         "No Gemini API request is made. Results are cached for 30 days; cropping and 4K composition remain local."
     )
     any_image_upload = st.file_uploader(
@@ -1527,7 +1529,7 @@ with col_left:
         if not any_image_upload:
             st.warning("Upload an image first.")
         else:
-            with st.spinner("Removing background locally… cached results are fast; first use may initialize the model."):
+            with st.spinner("Removing background locally… uses cached U2NETP if available; otherwise fast OpenCV fallback."):
                 transparent_result, bg_remove_error = remove_background_from_any_image(
                     any_image_upload.getvalue(), any_image_upload.name
                 )
@@ -1559,7 +1561,7 @@ with col_left:
 
     st.subheader("5. Remove Background from Cropped Player Images (Local)")
     st.caption(
-        "Upload the already-cropped left and right player photos. The app uses the cached local U2NETP segmentation model first, then face-guided OpenCV GrabCut if the model is unavailable. "
+        "Upload the already-cropped left and right player photos. The app uses the preloaded lightweight U2NETP model when available; it never downloads model weights during a user request, and falls back to OpenCV when weights are missing. "
         "No Gemini API request is made. For clarity, the reference crop download buttons above save the raw crop with its background; use the Remove Background or Extract buttons to create transparency. The cutouts can be applied "
         "directly to the left/right player slots in your thumbnail."
     )
@@ -1637,7 +1639,7 @@ with col_left:
 
     st.subheader("6. Reference Thumbnail Player Extractor")
     st.caption(
-        "Upload another cricket thumbnail, crop around each player, and create transparent PNG cutouts using local U2NETP segmentation with an OpenCV fallback. "
+        "Upload another cricket thumbnail, crop around each player, and create transparent PNG cutouts using cached local U2NETP when available, with a fast OpenCV fallback. "
         "This avoids Gemini API calls. Players are processed one at a time to reduce memory use and help avoid Render 502 disconnects. "
         "Segmentation may leave text or graphics that touch/overlap the player, and it cannot reconstruct hidden pixels. "
         "Use only images you have permission to reuse. Successful extractions are cached for 30 days."
@@ -1712,12 +1714,12 @@ with col_left:
                 # Reference-thumbnail defaults: keep the left player on the left third,
                 # exclude most of the central LIVE/text area, and include the full torso.
                 # Versioned widget keys reset previously saved slider positions on deploy.
-                left_x_range = st.slider("Horizontal range (%) — left", 0, 100, (0, 38), key="ref_left_x_range_v2")
-                left_y_range = st.slider("Vertical range (%) — left", 0, 100, (8, 100), key="ref_left_y_range_v2")
+                left_x_range = st.slider("Horizontal range (%) — left", 0, 100, (0, 43), key="ref_left_x_range_v3")
+                left_y_range = st.slider("Vertical range (%) — left", 0, 100, (8, 100), key="ref_left_y_range_v3")
             with crop_right_col:
                 st.markdown("**Right player crop**")
-                right_x_range = st.slider("Horizontal range (%) — right", 0, 100, (62, 100), key="ref_right_x_range_v2")
-                right_y_range = st.slider("Vertical range (%) — right", 0, 100, (8, 100), key="ref_right_y_range_v2")
+                right_x_range = st.slider("Horizontal range (%) — right", 0, 100, (50, 100), key="ref_right_x_range_v3")
+                right_y_range = st.slider("Vertical range (%) — right", 0, 100, (8, 100), key="ref_right_y_range_v3")
 
             def _reference_crop(image, x_range, y_range):
                 x0 = int(image.width * x_range[0] / 100)
@@ -1820,7 +1822,7 @@ with col_left:
                 st.session_state["_reference_pending_extractions"] = pending_extractions[1:]
                 side = task["side"]
                 with st.spinner(
-                    f"Removing {side} player background locally… using the preloaded U²-NetP model when available, with OpenCV fallback."
+                    f"Removing {side} player background… using cached local U2NETP if installed, otherwise the fast OpenCV fallback."
                 ):
                     cutout, extract_error = remove_background_from_any_image(
                         task["source_bytes"], task.get("filename", f"reference_{side}_player.jpg")
@@ -2123,4 +2125,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("LOCAL-FIRST: cropping, local U2NETP background removal (OpenCV GrabCut fallback), cached cutouts, composition, and 3840 × 2160 PNG export run locally without Gemini API calls. Gemini is used only when you explicitly press a front-facing pose conversion button. Local segmentation may leave overlapping text/graphics and cannot reconstruct hidden pixels.")
+st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run locally without Gemini API calls. Model weights are never downloaded during user interactions. Gemini is used only when you explicitly press a front-facing pose conversion button. Local segmentation may leave overlapping text/graphics and cannot reconstruct hidden pixels.")
