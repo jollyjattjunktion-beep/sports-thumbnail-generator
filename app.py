@@ -20,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v14-clean-portraits-subtle-panels-crisp-flags"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v14-reference-player-extractor"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -372,7 +372,7 @@ def _remove_magenta_chroma_background(image):
     return image
 
 
-def remove_background_from_any_image(upload_bytes, filename="image"):
+def remove_background_from_any_image(upload_bytes, filename="image", subject_instruction=None):
     """Use Gemini image editing to isolate the main foreground subject on transparency.
 
     Works with ordinary uploaded photos, products, people, pets, objects and logos.
@@ -408,7 +408,7 @@ def remove_background_from_any_image(upload_bytes, filename="image"):
     except Exception as exc:
         return None, f"Could not read the uploaded image: {exc}"
 
-    prompt = (
+    base_prompt = (
         "Perform a precise background-removal edit on the supplied image. Identify and preserve the main "
         "foreground subject or object exactly as shown, including fine edges such as hair, fur, feathers, "
         "transparent product edges, and small details. Remove the entire original background, including "
@@ -421,6 +421,7 @@ def remove_background_from_any_image(upload_bytes, filename="image"):
         "gradient, texture, scenery, cast shadow, or magenta rim light. Magenta must only appear in empty "
         "background pixels, never on the subject. Return one edited image."
     )
+    prompt = (str(subject_instruction).strip() + "\n\n" + base_prompt) if subject_instruction else base_prompt
     request_body = {
         "model": os.environ.get("GEMINI_IMAGE_MODEL", "gemini-nano-banana-2.1").strip(),
         "input": [
@@ -848,21 +849,12 @@ def get_image_alpha_content(image):
 
 
 def apply_sports_color_grade(image):
-    """Apply restrained thumbnail finishing without reshaping or regenerating facial features."""
     if image is None:
         return None
-    image = image.convert("RGBA")
-    alpha = image.getchannel("A")
-    rgb = image.convert("RGB")
-    # Mild colour/contrast adjustments keep jerseys vivid while preserving natural skin tones.
-    rgb = ImageEnhance.Color(rgb).enhance(1.07)
-    rgb = ImageEnhance.Contrast(rgb).enhance(1.04)
-    # Gentle detail sharpening avoids the harsh halos caused by aggressive sharpness boosts.
-    rgb = ImageEnhance.Sharpness(rgb).enhance(1.10)
-    rgb = rgb.filter(ImageFilter.UnsharpMask(radius=1.25, percent=95, threshold=4))
-    finished = rgb.convert("RGBA")
-    finished.putalpha(alpha)
-    return finished
+    image = ImageEnhance.Color(image).enhance(1.10)
+    image = ImageEnhance.Contrast(image).enhance(1.06)
+    image = ImageEnhance.Sharpness(image).enhance(1.24)
+    return image
 
 
 # Exact player placement boxes measured from the 16:9 reference thumbnail.
@@ -889,11 +881,6 @@ def render_player_cutout(canvas, player_img, side):
         return
 
     player = get_image_alpha_content(apply_sports_color_grade(player_img)).convert("RGBA")
-    # Smooth only the transparent cutout boundary by a fraction of a pixel; image pixels
-    # and facial features are otherwise left untouched by this edge-cleanup step.
-    source_alpha = player.getchannel("A")
-    if source_alpha.getextrema() != (255, 255):
-        player.putalpha(source_alpha.filter(ImageFilter.GaussianBlur(radius=0.40)))
     if side == "left":
         max_w, max_h = LEFT_PLAYER_WIDTH, LEFT_PLAYER_HEIGHT
     elif side == "right":
@@ -1065,18 +1052,11 @@ def draw_team_flag_watermark(canvas, flag_image, x, y, size, main_color, accent_
 
     if flag_image is not None:
         flag = flag_image.convert("RGBA")
-        # Improve flag colour definition/edge clarity while preserving each flag's artwork.
-        flag_alpha = flag.getchannel("A")
-        flag_rgb = ImageEnhance.Color(flag.convert("RGB")).enhance(1.10)
-        flag_rgb = ImageEnhance.Contrast(flag_rgb).enhance(1.16)
-        flag_rgb = ImageEnhance.Sharpness(flag_rgb).enhance(1.12)
-        flag = flag_rgb.convert("RGBA")
-        flag.putalpha(flag_alpha)
-        # Contain-fit the full rectangular flag on the badge; don't crop away identifying details.
-        max_flag = int(size * 0.82)
+        # Contain-fit the full rectangular flag on the badge; don't crop away its identifying details.
+        max_flag = int(size * 0.72)
         scale = min(max_flag / max(1, flag.width), max_flag / max(1, flag.height))
         flag = flag.resize((max(1, int(flag.width * scale)), max(1, int(flag.height * scale))), Image.Resampling.LANCZOS)
-        fa = flag.getchannel("A").point(lambda value: int(value * min(255, opacity + 20) / 255))
+        fa = flag.getchannel("A").point(lambda value: int(value * opacity / 255))
         flag.putalpha(fa)
         fx = (size - flag.width) // 2
         fy = (size - flag.height) // 2
@@ -1106,32 +1086,32 @@ def draw_team_color_backplates(canvas, team1_name, team2_name, flag1, flag2):
     right_inner_x = int(w * 0.66)
     right_outer_diag_x = int(w * 0.565)
 
-    # Main tinted side panels: lower alpha keeps the real stadium and pitch visible.
+    # Main tinted side panels.
     d.polygon([(0, 0), (left_inner_x, 0), (left_outer_diag_x, panel_bottom), (0, panel_bottom)],
-              fill=(*left_main, 48))
+              fill=(*left_main, 88))
     d.polygon([(w, 0), (w - left_inner_x, 0), (w - left_outer_diag_x, panel_bottom), (w, panel_bottom)],
-              fill=(*right_main, 48))
+              fill=(*right_main, 88))
 
-    # Subtle dark insets add depth without overwhelming the player cutouts.
+    # Rich darker insets add depth behind the player portraits.
     d.polygon([(0, 0), (int(w * .19), 0), (int(w * .29), panel_bottom), (0, panel_bottom)],
-              fill=(*left_dark, 16))
+              fill=(*left_dark, 34))
     d.polygon([(w, 0), (int(w * .81), 0), (int(w * .71), panel_bottom), (w, panel_bottom)],
-              fill=(*right_dark, 16))
+              fill=(*right_dark, 34))
 
-    # Narrower, softer team-colour slashes: colour is an accent, not a dominant overlay.
-    d.polygon([(int(w * .254), 0), (int(w * .274), 0), (int(w * .344), panel_bottom),
-               (int(w * .324), panel_bottom)], fill=(*left_accent, 76))
-    d.polygon([(int(w * .746), 0), (int(w * .726), 0), (int(w * .656), panel_bottom),
-               (int(w * .676), panel_bottom)], fill=(*right_accent, 76))
-    # Fine, subdued separator pinstripes.
-    d.line([(int(w * .282), 0), (int(w * .352), panel_bottom)], fill=(255, 255, 255, 58), width=4)
-    d.line([(int(w * .718), 0), (int(w * .648), panel_bottom)], fill=(255, 255, 255, 58), width=4)
+    # Diagonal team-colour slashes, inspired by the reference channel's split panels.
+    d.polygon([(int(w * .245), 0), (int(w * .276), 0), (int(w * .356), panel_bottom),
+               (int(w * .325), panel_bottom)], fill=(*left_accent, 150))
+    d.polygon([(int(w * .755), 0), (int(w * .724), 0), (int(w * .644), panel_bottom),
+               (int(w * .675), panel_bottom)], fill=(*right_accent, 150))
+    # Thin white separation pinstripes add sharp thumbnail contrast.
+    d.line([(int(w * .282), 0), (int(w * .362), panel_bottom)], fill=(255, 255, 255, 112), width=7)
+    d.line([(int(w * .718), 0), (int(w * .638), panel_bottom)], fill=(255, 255, 255, 112), width=7)
     canvas.alpha_composite(layer)
 
-    # Compact upper-corner flag badges stay clear, saturated, and behind the player/text layers.
-    watermark_size = 255
-    draw_team_flag_watermark(canvas, flag1, 34, 48, watermark_size, left_main, left_accent, opacity=225)
-    draw_team_flag_watermark(canvas, flag2, w - watermark_size - 34, 48, watermark_size, right_main, right_accent, opacity=225)
+    # Large faded team logos/flags sit BEHIND the players. Player cutouts are composited next.
+    watermark_size = 285
+    draw_team_flag_watermark(canvas, flag1, 30, 58, watermark_size, left_main, left_accent, opacity=145)
+    draw_team_flag_watermark(canvas, flag2, w - watermark_size - 30, 58, watermark_size, right_main, right_accent, opacity=145)
 
 
 def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
@@ -1257,7 +1237,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
 st.title("🏏 PREET SPORTS — 4K Cricket Thumbnail Studio")
 st.caption("Sharper, slightly larger player portraits; oversized LIVE; compact match badge and Hindi discussion banner; visible blue/green stadium, subtle team panels and compact badges; bold black/white nameplates; 3840 × 2160 PNG export.")
 
-for key in ["p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front", "p1_ai_source_hash", "p2_ai_source_hash", "t1_code", "t2_code", "auto_bg"]:
+for key in ["p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front", "p1_ai_source_hash", "p2_ai_source_hash", "t1_code", "t2_code", "auto_bg", "reference_left_cutout", "reference_right_cutout", "reference_thumbnail_hash"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -1399,7 +1379,137 @@ with col_left:
                 key="download_generic_background_removed",
             )
 
-    st.subheader("5. Background (optional override)")
+    st.subheader("5. Reference Thumbnail Player Extractor")
+    st.caption(
+        "Upload another cricket thumbnail, crop around each player, and ask Gemini to isolate the player into a transparent PNG. "
+        "The source is a flattened image, so text or graphics covering a player may not be perfectly recoverable. "
+        "Use only images you have permission to reuse."
+    )
+    reference_thumbnail = st.file_uploader(
+        "Upload reference thumbnail (PNG/JPG/WebP)",
+        type=["png", "jpg", "jpeg", "webp"],
+        key="reference_thumbnail_upload",
+    )
+    use_reference_cutouts = st.checkbox(
+        "Use extracted reference players in my PREET SPORTS thumbnail",
+        value=True,
+        key="use_reference_cutouts_checkbox",
+    )
+    if reference_thumbnail is not None:
+        ref_bytes = reference_thumbnail.getvalue()
+        ref_hash = hashlib.sha1(ref_bytes).hexdigest()
+        if st.session_state.get("reference_thumbnail_hash") != ref_hash:
+            st.session_state["reference_thumbnail_hash"] = ref_hash
+            st.session_state["reference_left_cutout"] = None
+            st.session_state["reference_right_cutout"] = None
+        try:
+            with Image.open(io.BytesIO(ref_bytes)) as ref_opened:
+                ref_image = ref_opened.convert("RGB")
+            st.image(ref_image, caption=f"Reference thumbnail: {ref_image.width} × {ref_image.height}", use_container_width=True)
+            st.caption("Adjust each crop so it contains one player as fully as possible. Avoid including the LIVE text and team banners.")
+            crop_left_col, crop_right_col = st.columns(2)
+            with crop_left_col:
+                st.markdown("**Left player crop**")
+                left_x_range = st.slider("Horizontal range (%) — left", 0, 100, (0, 52), key="ref_left_x_range")
+                left_y_range = st.slider("Vertical range (%) — left", 0, 100, (5, 100), key="ref_left_y_range")
+            with crop_right_col:
+                st.markdown("**Right player crop**")
+                right_x_range = st.slider("Horizontal range (%) — right", 0, 100, (48, 100), key="ref_right_x_range")
+                right_y_range = st.slider("Vertical range (%) — right", 0, 100, (5, 100), key="ref_right_y_range")
+
+            def _reference_crop(image, x_range, y_range):
+                x0 = int(image.width * x_range[0] / 100)
+                x1 = int(image.width * x_range[1] / 100)
+                y0 = int(image.height * y_range[0] / 100)
+                y1 = int(image.height * y_range[1] / 100)
+                x1 = max(x0 + 1, min(image.width, x1))
+                y1 = max(y0 + 1, min(image.height, y1))
+                return image.crop((x0, y0, x1, y1))
+
+            ref_left_crop = _reference_crop(ref_image, left_x_range, left_y_range)
+            ref_right_crop = _reference_crop(ref_image, right_x_range, right_y_range)
+            crop_prev1, crop_prev2 = st.columns(2)
+            with crop_prev1:
+                st.image(ref_left_crop, caption="Left crop preview", use_container_width=True)
+            with crop_prev2:
+                st.image(ref_right_crop, caption="Right crop preview", use_container_width=True)
+
+            extract_col1, extract_col2 = st.columns(2)
+            with extract_col1:
+                extract_left_clicked = st.button("✂️ Extract LEFT player", use_container_width=True, key="extract_reference_left")
+            with extract_col2:
+                extract_right_clicked = st.button("✂️ Extract RIGHT player", use_container_width=True, key="extract_reference_right")
+
+            def _crop_jpeg_bytes(crop):
+                # JPEG is used as the Gemini input because the image endpoint requires image/jpeg output.
+                crop_rgb = crop.convert("RGB")
+                if max(crop_rgb.size) > 1500:
+                    scale = 1500 / max(crop_rgb.size)
+                    crop_rgb = crop_rgb.resize((max(1, int(crop_rgb.width * scale)), max(1, int(crop_rgb.height * scale))), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                crop_rgb.save(buf, format="JPEG", quality=94, optimize=True)
+                return buf.getvalue()
+
+            if extract_left_clicked:
+                instruction = (
+                    "This crop comes from a cricket YouTube thumbnail. Isolate ONLY the main cricket player on the LEFT side of this crop. "
+                    "Preserve the person's actual facial features, hair, pose, skin tone, jersey and visible uniform details as faithfully as possible. "
+                    "Remove stadium scenery, all thumbnail typography, LIVE labels, team banners, flags, watermarks and other graphic elements. "
+                    "Do not invent missing body parts or change the person's face. Keep the full visible head, shoulders and torso; transparent cutout is intended for a new thumbnail."
+                )
+                with st.spinner("Gemini is extracting the left player…"):
+                    cutout, extract_error = remove_background_from_any_image(
+                        _crop_jpeg_bytes(ref_left_crop), "reference_left_player.jpg", subject_instruction=instruction
+                    )
+                if cutout is not None:
+                    st.session_state["reference_left_cutout"] = cutout
+                    st.session_state.p1_cutout = cutout
+                    st.success("Left player extracted. It is ready to use in the thumbnail.")
+                else:
+                    st.error(extract_error or "Could not extract the left player.")
+
+            if extract_right_clicked:
+                instruction = (
+                    "This crop comes from a cricket YouTube thumbnail. Isolate ONLY the main cricket player on the RIGHT side of this crop. "
+                    "Preserve the person's actual facial features, hair, pose, skin tone, jersey and visible uniform details as faithfully as possible. "
+                    "Remove stadium scenery, all thumbnail typography, LIVE labels, team banners, flags, watermarks and other graphic elements. "
+                    "Do not invent missing body parts or change the person's face. Keep the full visible head, shoulders and torso; transparent cutout is intended for a new thumbnail."
+                )
+                with st.spinner("Gemini is extracting the right player…"):
+                    cutout, extract_error = remove_background_from_any_image(
+                        _crop_jpeg_bytes(ref_right_crop), "reference_right_player.jpg", subject_instruction=instruction
+                    )
+                if cutout is not None:
+                    st.session_state["reference_right_cutout"] = cutout
+                    st.session_state.p2_cutout = cutout
+                    st.success("Right player extracted. It is ready to use in the thumbnail.")
+                else:
+                    st.error(extract_error or "Could not extract the right player.")
+
+            saved_left, saved_right = st.columns(2)
+            with saved_left:
+                if st.session_state.get("reference_left_cutout") is not None:
+                    st.image(st.session_state["reference_left_cutout"], caption="Extracted left player", use_container_width=True)
+                    left_png = io.BytesIO()
+                    st.session_state["reference_left_cutout"].save(left_png, format="PNG")
+                    st.download_button("Download left cutout PNG", left_png.getvalue(), "reference_left_player.png", "image/png", use_container_width=True, key="download_ref_left_cutout")
+            with saved_right:
+                if st.session_state.get("reference_right_cutout") is not None:
+                    st.image(st.session_state["reference_right_cutout"], caption="Extracted right player", use_container_width=True)
+                    right_png = io.BytesIO()
+                    st.session_state["reference_right_cutout"].save(right_png, format="PNG")
+                    st.download_button("Download right cutout PNG", right_png.getvalue(), "reference_right_player.png", "image/png", use_container_width=True, key="download_ref_right_cutout")
+
+            if st.button("🧹 Clear extracted reference players", key="clear_reference_cutouts"):
+                st.session_state["reference_left_cutout"] = None
+                st.session_state["reference_right_cutout"] = None
+                st.rerun()
+        except Exception as exc:
+            st.error(f"Could not read the reference thumbnail: {exc}")
+    else:
+        use_reference_cutouts = False
+
+    st.subheader("6. Background (optional override)")
     stadium_url = st.text_input(
         "Custom Stadium Background URL",
         value="",
@@ -1506,6 +1616,8 @@ right_is_cutout = _uploaded_file_is_transparent_cutout(custom_p2)
 # A normal opaque JPEG is treated as AI input, not pasted as a rectangle over the stadium.
 if custom_p1 and st.session_state.p1_ai_front is not None and st.session_state.p1_ai_source_hash == left_upload_hash:
     p1_final = st.session_state.p1_ai_front
+elif use_reference_cutouts and st.session_state.get("reference_left_cutout") is not None:
+    p1_final = st.session_state["reference_left_cutout"]
 elif custom_p1 and left_is_cutout:
     p1_final = Image.open(io.BytesIO(custom_p1.getvalue())).convert("RGBA")
 elif st.session_state.p1_cutout is not None:
@@ -1517,6 +1629,8 @@ else:
 
 if custom_p2 and st.session_state.p2_ai_front is not None and st.session_state.p2_ai_source_hash == right_upload_hash:
     p2_final = st.session_state.p2_ai_front
+elif use_reference_cutouts and st.session_state.get("reference_right_cutout") is not None:
+    p2_final = st.session_state["reference_right_cutout"]
 elif custom_p2 and right_is_cutout:
     p2_final = Image.open(io.BytesIO(custom_p2.getvalue())).convert("RGBA")
 elif st.session_state.p2_cutout is not None:
