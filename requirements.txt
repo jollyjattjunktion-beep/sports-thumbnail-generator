@@ -4,3 +4,4 @@ numpy>=1.26,<3.0
 Pillow>=10.0,<13.0
 beautifulsoup4>=4.12,<5.0
 opencv-python-headless>=4.8,<5.0
+rembg[cpu]>=2.0.60,<3.0
