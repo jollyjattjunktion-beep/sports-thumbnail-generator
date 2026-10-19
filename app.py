@@ -20,7 +20,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v16-local-first-no-gemini-crop-bg-thumbnail"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v17-fast-u2netp-cached-extraction"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -381,9 +381,11 @@ def get_local_rembg_session():
         raise RuntimeError(
             "Local background removal is not installed. Add `rembg[cpu]` to requirements.txt and redeploy."
         ) from exc
-    # u2net is a general-purpose foreground segmentation model. The first use may
-    # download its model weights; subsequent requests reuse this session.
-    return new_session("u2net")
+    # u2netp is the lightweight U²-Net model. It is much smaller and generally
+    # faster on Render's CPU-only instances than the full u2net model. The first
+    # call may download weights; this session is reused for subsequent extractions.
+    model_name = os.environ.get("REMBG_MODEL", "u2netp").strip() or "u2netp"
+    return new_session(model_name)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 24 * 30, max_entries=64)
@@ -408,7 +410,7 @@ def _remove_background_png_cached(source_bytes):
         )
         result = result.crop(bbox)
     output = io.BytesIO()
-    result.save(output, format="PNG", optimize=False, compress_level=3)
+    result.save(output, format="PNG", optimize=False, compress_level=1)
     return output.getvalue()
 
 
@@ -423,14 +425,16 @@ def remove_background_from_any_image(upload_bytes, filename="image", subject_ins
         with Image.open(io.BytesIO(upload_bytes)) as opened:
             opened.load()
             source = opened.convert("RGBA")
-            if max(source.size) > 1800:
-                scale = 1800 / max(source.size)
+            # Keep CPU inference responsive. The final thumbnail is still rendered
+            # at 3840x2160; segmentation works on this resized source and is cached.
+            if max(source.size) > 1200:
+                scale = 1200 / max(source.size)
                 source = source.resize(
                     (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
                     Image.Resampling.LANCZOS,
                 )
             source_buf = io.BytesIO()
-            source.save(source_buf, format="PNG", optimize=False, compress_level=3)
+            source.save(source_buf, format="PNG", optimize=False, compress_level=1)
             normalized_bytes = source_buf.getvalue()
     except Exception as exc:
         return None, f"Could not read the uploaded image: {exc}"
@@ -1313,7 +1317,7 @@ with col_left:
 
     st.subheader("4. Remove Background from Any Image")
     st.caption(
-        "Local background removal uses rembg (U²-Net) and does not consume Gemini API quota. "
+        "Local background removal uses the lightweight rembg u2netp model by default and does not consume Gemini API quota. "
         "The first run may take longer while the segmentation model initializes; successful results are cached for 30 days."
     )
     any_image_upload = st.file_uploader(
@@ -1562,11 +1566,11 @@ with col_left:
             def _crop_jpeg_bytes(crop):
                 # Convert crop to a compact local-model input. No API request is made.
                 crop_rgb = crop.convert("RGB")
-                if max(crop_rgb.size) > 1500:
-                    scale = 1500 / max(crop_rgb.size)
+                if max(crop_rgb.size) > 1200:
+                    scale = 1200 / max(crop_rgb.size)
                     crop_rgb = crop_rgb.resize((max(1, int(crop_rgb.width * scale)), max(1, int(crop_rgb.height * scale))), Image.Resampling.LANCZOS)
                 buf = io.BytesIO()
-                crop_rgb.save(buf, format="JPEG", quality=94, optimize=True)
+                crop_rgb.save(buf, format="JPEG", quality=91, optimize=False)
                 return buf.getvalue()
 
             if extract_both_clicked:
@@ -1574,13 +1578,27 @@ with col_left:
                 # thumbnail slots. The user does not need to download/re-upload PNGs.
                 left_cutout = right_cutout = None
                 left_error = right_error = None
-                with st.spinner("Extracting both players locally and applying them to your thumbnail…"):
+                # Show progress rather than one long spinner. The first extraction
+                # can take longer while Render downloads the small u2netp model;
+                # repeat crops are cached for 30 days and should be much faster.
+                extraction_progress = st.progress(0, text="Preparing fast local model… first run may take longer")
+                with st.status("Extracting players locally…", expanded=True) as extraction_status:
+                    extraction_status.write("Step 1 of 2 — removing the left background")
                     left_cutout, left_error = remove_background_from_any_image(
                         _crop_jpeg_bytes(ref_left_crop), "reference_left_player.jpg"
                     )
+                    extraction_progress.progress(50, text="Left player processed; preparing right player…")
+                    extraction_status.write("Step 2 of 2 — removing the right background")
                     right_cutout, right_error = remove_background_from_any_image(
                         _crop_jpeg_bytes(ref_right_crop), "reference_right_player.jpg"
                     )
+                    extraction_progress.progress(100, text="Extraction finished")
+                    extraction_status.update(
+                        label="Both player extraction attempts finished",
+                        state="complete" if left_cutout is not None and right_cutout is not None else "error",
+                        expanded=False,
+                    )
+                extraction_progress.empty()
                 if left_cutout is not None:
                     st.session_state["reference_left_cutout"] = left_cutout
                     st.session_state.p1_cutout = left_cutout
@@ -1895,4 +1913,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("LOCAL-FIRST: cropping, background removal (rembg/U²-Net), cached cutouts, composition, and 3840 × 2160 PNG export run locally without Gemini API calls. Gemini is used only when you explicitly press a front-facing pose conversion button. Local segmentation may leave overlapping text/graphics and cannot reconstruct hidden pixels.")
+st.caption("LOCAL-FIRST: cropping, background removal (rembg/u2netp), cached cutouts, composition, and 3840 × 2160 PNG export run locally without Gemini API calls. Gemini is used only when you explicitly press a front-facing pose conversion button. Local segmentation may leave overlapping text/graphics and cannot reconstruct hidden pixels.")
