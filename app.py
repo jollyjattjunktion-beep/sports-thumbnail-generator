@@ -6,7 +6,6 @@ import json
 import os
 import re
 from urllib.parse import urlsplit, urlunsplit, urljoin
-from pathlib import Path
 
 import requests
 import numpy as np
@@ -22,7 +21,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v20-preloaded-u2netp-512"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v21-fast-grabcut-local"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -374,102 +373,173 @@ def _remove_magenta_chroma_background(image):
     return image
 
 
-@st.cache_resource(show_spinner=False)
-def get_local_rembg_session():
-    """Create one reusable CPU segmentation session and use the build-time model cache."""
-    try:
-        # Keep model weights in the project directory so the optional Render build
-        # preloader and runtime app use exactly the same location.
-        model_home = Path(
-            os.environ.get("PREET_REMBG_HOME")
-            or os.environ.get("U2NET_HOME")
-            or str(Path(__file__).resolve().parent / ".preet_models" / "u2net")
-        )
-        model_home.mkdir(parents=True, exist_ok=True)
-        # Force runtime and build-preloader to use the same model cache directory.
-        os.environ["U2NET_HOME"] = str(model_home)
-        from rembg import new_session
-    except ImportError as exc:
-        raise RuntimeError(
-            "Local background removal is not installed. Add `rembg[cpu]` to requirements.txt and redeploy."
-        ) from exc
-    # u2netp is the compact model. preload_rembg_model.py downloads weights during
-    # Render's build so the first user click does not have to wait for network I/O.
-    model_name = os.environ.get("REMBG_MODEL", "u2netp").strip() or "u2netp"
-    return new_session(model_name)
-
-
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 24 * 30, max_entries=64)
-def _remove_background_png_cached(source_bytes):
-    """Run local rembg once per unique image and cache the successful PNG bytes."""
-    from rembg import remove
-    session = get_local_rembg_session()
-    result_bytes = remove(source_bytes, session=session, force_return_bytes=True)
-    # Validate and normalize output before caching it.
-    with Image.open(io.BytesIO(result_bytes)) as opened:
+def _fast_local_cutout_cached(source_bytes):
+    """Fast, model-free background segmentation with OpenCV GrabCut.
+
+    This avoids downloading/initializing ONNX models on small Render instances.
+    Input is capped before segmentation; the alpha mask is then resized onto the
+    full-size source so the final cutout retains more detail than a 512px output.
+    """
+    import cv2
+
+    # Limit OpenCV parallelism to reduce CPU and memory spikes on small containers.
+    try:
+        cv2.setNumThreads(1)
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(source_bytes)) as opened:
         opened.load()
-        result = opened.convert("RGBA")
-    alpha = result.getchannel("A")
-    bbox = alpha.getbbox()
-    if bbox:
-        # Tight crop with a small transparent margin to avoid clipping hair/edges.
-        left, top, right, bottom = bbox
-        pad = max(4, int(max(result.size) * 0.012))
-        bbox = (
-            max(0, left - pad), max(0, top - pad),
-            min(result.width, right + pad), min(result.height, bottom + pad),
+        source = opened.convert("RGB")
+
+    # Avoid large full-resolution intermediates on small Render instances.
+    max_output_side = 1800
+    if max(source.size) > max_output_side:
+        scale_out = max_output_side / float(max(source.size))
+        source = source.resize(
+            (max(1, round(source.width * scale_out)), max(1, round(source.height * scale_out))),
+            Image.Resampling.LANCZOS,
         )
-        result = result.crop(bbox)
+
+    original_size = source.size
+    max_segmentation_side = int(os.environ.get("PREET_GRABCUT_MAX_SIDE", "512"))
+    max_segmentation_side = max(320, min(max_segmentation_side, 640))
+    scale = min(1.0, max_segmentation_side / float(max(source.size)))
+    small = source if scale >= 1.0 else source.resize(
+        (max(1, round(source.width * scale)), max(1, round(source.height * scale))),
+        Image.Resampling.LANCZOS,
+    )
+
+    rgb = np.asarray(small, dtype=np.uint8)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    height, width = bgr.shape[:2]
+    if width < 40 or height < 40:
+        raise ValueError("Image crop is too small. Use a player crop at least 40 × 40 pixels.")
+
+    mask = np.zeros((height, width), dtype=np.uint8)
+    # The crop should contain the player with some background margin. The small
+    # outside strip seeds the background; GrabCut estimates the subject inside.
+    margin_x = max(2, int(width * 0.012))
+    margin_y = max(2, int(height * 0.012))
+    rect_w = max(1, width - 2 * margin_x)
+    rect_h = max(1, height - 2 * margin_y)
+    rect = (margin_x, margin_y, rect_w, rect_h)
+    bg_model = np.zeros((1, 65), dtype=np.float64)
+    fg_model = np.zeros((1, 65), dtype=np.float64)
+
+    cv2.grabCut(
+        bgr,
+        mask,
+        rect,
+        bg_model,
+        fg_model,
+        2,
+        cv2.GC_INIT_WITH_RECT,
+    )
+    alpha_small = np.where(
+        (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0
+    ).astype(np.uint8)
+
+    # Light cleanup: preserve hair and jersey details, remove specks, soften jagged edges.
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    alpha_small = cv2.morphologyEx(alpha_small, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    # Keep the largest connected foreground component so text/icons elsewhere in the
+    # crop are less likely to remain. Small detached components are deliberately dropped.
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        (alpha_small > 0).astype(np.uint8), 8
+    )
+    if component_count > 1:
+        largest_idx = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        largest_area = int(stats[largest_idx, cv2.CC_STAT_AREA])
+        if largest_area < max(80, int(width * height * 0.025)):
+            raise ValueError(
+                "Could not confidently identify the player. Adjust the crop so the player is centered with some background around them."
+            )
+        # Keep the main player component and only substantial nearby pieces (for example,
+        # a hand/arm separated by a narrow background gap).
+        component_mask = np.zeros_like(alpha_small)
+        for idx in range(1, component_count):
+            area = int(stats[idx, cv2.CC_STAT_AREA])
+            if idx == largest_idx or area >= max(80, int(largest_area * 0.015)):
+                component_mask[labels == idx] = 255
+        alpha_small = component_mask
+
+    foreground_fraction = float(np.count_nonzero(alpha_small)) / float(alpha_small.size)
+    if foreground_fraction < 0.04 or foreground_fraction > 0.97:
+        raise ValueError(
+            "The automatic crop mask was not reliable. Adjust the player crop to include the full player and a visible background margin, then try again."
+        )
+
+    alpha = Image.fromarray(alpha_small, mode="L")
+    if original_size != alpha.size:
+        alpha = alpha.resize(original_size, Image.Resampling.LANCZOS)
+    alpha = alpha.filter(ImageFilter.GaussianBlur(0.65))
+
+    result = source.convert("RGBA")
+    result.putalpha(alpha)
+    bbox = alpha.getbbox()
+    if not bbox:
+        raise ValueError("No foreground pixels were detected in this crop.")
+    left, top, right, bottom = bbox
+    padding = max(3, int(max(result.size) * 0.012))
+    result = result.crop((
+        max(0, left - padding), max(0, top - padding),
+        min(result.width, right + padding), min(result.height, bottom + padding),
+    ))
+
     output = io.BytesIO()
     result.save(output, format="PNG", optimize=False, compress_level=1)
     return output.getvalue()
 
 
 def remove_background_from_any_image(upload_bytes, filename="image", subject_instruction=None):
-    """Remove an image background locally with rembg; no Gemini API call is made.
+    """Remove the background locally without AI APIs or a downloaded neural model.
 
-    Returns (PIL.Image in RGBA mode or None, error message or None). `subject_instruction`
-    is retained for compatibility with the reference-player extractor, but local
-    segmentation does not interpret natural-language instructions.
+    Uses fast OpenCV GrabCut segmentation, cached by source bytes. Returns
+    (RGBA PIL image or None, error message or None). The optional natural-language
+    instruction is ignored because this local algorithm is not prompt-driven.
     """
     try:
         with Image.open(io.BytesIO(upload_bytes)) as opened:
             opened.load()
             source = opened.convert("RGBA")
-            # Keep CPU inference responsive on small Render instances. The final
-            # thumbnail is still rendered at 3840x2160; the segmentation result is
-            # cached and scaled naturally when composing the final thumbnail.
-            max_side = int(os.environ.get("REMBG_MAX_SIDE", "640"))
-            max_side = max(512, min(max_side, 960))
-            if max(source.size) > max_side:
-                scale = max_side / max(source.size)
-                source = source.resize(
-                    (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
+            # If the input already has meaningful transparency, retain it and avoid segmentation.
+            alpha = source.getchannel("A")
+            if alpha.getextrema()[0] < 250:
+                bbox = alpha.getbbox()
+                if bbox:
+                    source = source.crop(bbox)
+                return source, None
+
+            # Limit cache input size to reduce memory; output cutout keeps up to 1800px detail.
+            rgb = source.convert("RGB")
+            max_source_side = 1800
+            if max(rgb.size) > max_source_side:
+                scale = max_source_side / float(max(rgb.size))
+                rgb = rgb.resize(
+                    (max(1, round(rgb.width * scale)), max(1, round(rgb.height * scale))),
                     Image.Resampling.LANCZOS,
                 )
-            source_buf = io.BytesIO()
-            source.save(source_buf, format="PNG", optimize=False, compress_level=1)
-            normalized_bytes = source_buf.getvalue()
+            normalized = io.BytesIO()
+            rgb.save(normalized, format="JPEG", quality=90, optimize=False)
+            normalized_bytes = normalized.getvalue()
     except Exception as exc:
         return None, f"Could not read the uploaded image: {exc}"
 
     try:
-        result_bytes = _remove_background_png_cached(normalized_bytes)
+        result_bytes = _fast_local_cutout_cached(normalized_bytes)
         with Image.open(io.BytesIO(result_bytes)) as output_image:
             output_image.load()
             result = output_image.convert("RGBA")
-        if result.getchannel("A").getextrema() == (255, 255):
-            return None, (
-                "The local segmentation model did not find a transparent foreground. "
-                "Try a clearer image with the subject separated from the background."
-            )
+        alpha_extrema = result.getchannel("A").getextrema()
+        if alpha_extrema == (255, 255):
+            return None, "No transparent foreground was created. Try adjusting the crop around the player."
         return result, None
-    except RuntimeError as exc:
-        return None, str(exc)
     except Exception as exc:
         return None, (
-            f"Local background removal failed: {exc}. Check that rembg[cpu] and its model "
-            "dependencies are installed in Render. No Gemini request was made."
+            f"Fast local background removal failed: {exc}. Make the crop include the full player and a small border of background, then retry."
         )
 
 def convert_player_to_front_facing(upload_bytes, filename, side):
@@ -1335,9 +1405,8 @@ with col_left:
 
     st.subheader("4. Remove Background from Any Image")
     st.caption(
-        "Local background removal uses the lightweight rembg u2netp model and does not consume Gemini API quota. "
-        "For a fast first click on Render, add `python preload_rembg_model.py` to the Build Command after installing requirements. "
-        "Player crops are reduced to 512 px for segmentation and successful results are cached for 30 days."
+        "Local background removal uses fast OpenCV GrabCut, with no Gemini calls and no pretrained model download. "
+        "Crops are processed at a small resolution, successful cutouts are cached for 30 days, and 4K composition remains local."
     )
     any_image_upload = st.file_uploader(
         "Choose any image to remove its background",
@@ -1381,7 +1450,7 @@ with col_left:
     st.subheader("5. Remove Background from Cropped Player Images (Local)")
     st.caption(
         "Upload the already-cropped left and right player photos. The app removes the colored background locally "
-        "with rembg and creates transparent PNG cutouts—no Gemini API request is made. The cutouts can be applied "
+        "with fast local OpenCV GrabCut and creates transparent PNG cutouts—no Gemini API request is made. The cutouts can be applied "
         "directly to the left/right player slots in your thumbnail."
     )
     cutout_left_col, cutout_right_col = st.columns(2)
@@ -1458,7 +1527,7 @@ with col_left:
 
     st.subheader("6. Reference Thumbnail Player Extractor")
     st.caption(
-        "Upload another cricket thumbnail, crop around each player, and use local rembg segmentation to make transparent PNG cutouts. "
+        "Upload another cricket thumbnail, crop around each player, and use fast local OpenCV GrabCut to make transparent PNG cutouts. "
         "This avoids Gemini API calls. Players are processed one at a time to reduce memory use and help avoid Render 502 disconnects. "
         "Segmentation may leave text or graphics that touch/overlap the player, and it cannot reconstruct hidden pixels. "
         "Use only images you have permission to reuse. Successful extractions are cached for 30 days."
@@ -1593,8 +1662,8 @@ with col_left:
             def _crop_jpeg_bytes(crop):
                 # Convert crop to a compact local-model input. No API request is made.
                 crop_rgb = crop.convert("RGB")
-                max_side = int(os.environ.get("REMBG_CROP_MAX_SIDE", "512"))
-                max_side = max(384, min(max_side, 768))
+                max_side = int(os.environ.get("PREET_GRABCUT_MAX_SIDE", "512"))
+                max_side = max(320, min(max_side, 640))
                 if max(crop_rgb.size) > max_side:
                     scale = max_side / max(crop_rgb.size)
                     crop_rgb = crop_rgb.resize((max(1, int(crop_rgb.width * scale)), max(1, int(crop_rgb.height * scale))), Image.Resampling.LANCZOS)
@@ -1632,16 +1701,16 @@ with col_left:
                 st.session_state["_reference_extraction_messages"] = []
                 st.rerun()
 
-            # Handle exactly one rembg inference per request. After each inference,
-            # save its result in session state and rerun so the expensive model
-            # intermediates are released before the next player or 4K composition.
+            # Handle exactly one local GrabCut segmentation per request. After each inference,
+            # save its result in session state and rerun so temporary arrays are released
+            # before the next player or 4K composition.
             pending_extractions = st.session_state.get("_reference_pending_extractions", [])
             if pending_extractions:
                 task = pending_extractions[0]
                 st.session_state["_reference_pending_extractions"] = pending_extractions[1:]
                 side = task["side"]
                 with st.spinner(
-                    f"Removing {side} player background locally… using the cached lightweight model where available. "
+                    f"Removing {side} player background locally… using fast OpenCV GrabCut without a model download. "
                     "The crop is reduced to 512 px for faster segmentation."
                 ):
                     cutout, extract_error = remove_background_from_any_image(
@@ -1665,7 +1734,7 @@ with col_left:
                     messages.append(f"{side.title()} player extraction failed: {extract_error or 'Unknown local segmentation error.'}")
 
                 # Release local inference/result buffers before next queued crop or
-                # the 4K renderer. rembg model session itself remains cached.
+                # the 4K renderer. No neural model session is needed.
                 del cutout
                 gc.collect()
                 if st.session_state.get("_reference_pending_extractions"):
@@ -1945,4 +2014,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("LOCAL-FIRST: cropping, background removal (rembg/u2netp), cached cutouts, composition, and 3840 × 2160 PNG export run locally without Gemini API calls. Gemini is used only when you explicitly press a front-facing pose conversion button. Local segmentation may leave overlapping text/graphics and cannot reconstruct hidden pixels.")
+st.caption("LOCAL-FIRST: cropping, fast OpenCV GrabCut background removal, cached cutouts, composition, and 3840 × 2160 PNG export run locally without Gemini API calls. Gemini is used only when you explicitly press a front-facing pose conversion button. Local segmentation may leave overlapping text/graphics and cannot reconstruct hidden pixels.")
