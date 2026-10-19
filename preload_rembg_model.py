@@ -1,9 +1,10 @@
-"""Preload the lightweight local rembg model during the Render build.
+"""Best-effort U2NETP preload during the Render build, never during user requests.
 
 Recommended Render Build Command:
     pip install -r requirements.txt && python preload_rembg_model.py
 
-The runtime app uses the same PREET_REMBG_HOME / U2NET_HOME directory.
+If weights cannot be downloaded during build, deployment continues and the app
+falls back to fast OpenCV GrabCut. Runtime code never initiates a model download.
 """
 import os
 from pathlib import Path
@@ -17,16 +18,19 @@ MODEL_HOME = Path(
 MODEL_HOME.mkdir(parents=True, exist_ok=True)
 os.environ["U2NET_HOME"] = str(MODEL_HOME)
 model_name = os.environ.get("REMBG_MODEL", "u2netp").strip() or "u2netp"
+expected = MODEL_HOME / f"{model_name}.onnx"
 
-print(f"Preloading local rembg model '{model_name}' into {MODEL_HOME} ...", flush=True)
-try:
-    from rembg import new_session
-    session = new_session(model_name)
-    del session
-except Exception as exc:
-    raise SystemExit(
-        f"Could not preload rembg model '{model_name}': {exc}\n"
-        "Check that rembg[cpu] is installed and the build environment can download model weights."
-    )
-files = sorted(p.name for p in MODEL_HOME.iterdir() if p.is_file())
-print(f"Local background-removal model ready. Cached files: {files}", flush=True)
+if expected.exists():
+    print(f"PREET SPORTS: cached model already exists: {expected} ({expected.stat().st_size:,} bytes)", flush=True)
+else:
+    print(f"PREET SPORTS: attempting build-time preload of {model_name} into {MODEL_HOME} ...", flush=True)
+    try:
+        from rembg import new_session
+        session = new_session(model_name)
+        del session
+        if expected.exists():
+            print(f"PREET SPORTS: model ready: {expected} ({expected.stat().st_size:,} bytes)", flush=True)
+        else:
+            print(f"PREET SPORTS WARNING: {expected.name} was not found after initialization; runtime will use OpenCV fallback. Files: {[p.name for p in MODEL_HOME.iterdir()]}", flush=True)
+    except Exception as exc:
+        print(f"PREET SPORTS WARNING: model preload failed: {exc}. Deployment can continue; runtime will use OpenCV fallback.", flush=True)
