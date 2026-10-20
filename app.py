@@ -21,7 +21,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v28-center-stack-refined"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v29-womens-flags-icc-profiles"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -35,53 +35,151 @@ DEFAULT_STADIUM_URL = (
 
 # Team flags are separate from captain photos, so women's team labels work too.
 TEAM_FLAG_DATABASE = {
+    # Australia
+    "AUS": "https://flagcdn.com/w320/au.png",
+    "AUSTRALIA": "https://flagcdn.com/w320/au.png",
+    "AUS WOMEN": "https://flagcdn.com/w320/au.png",
+    "AUSTRALIA WOMEN": "https://flagcdn.com/w320/au.png",
+    "AUS-W": "https://flagcdn.com/w320/au.png",
+    "AUS W": "https://flagcdn.com/w320/au.png",
+    # Bangladesh
+    "BAN": "https://flagcdn.com/w320/bd.png",
+    "BANGLADESH": "https://flagcdn.com/w320/bd.png",
+    "BAN WOMEN": "https://flagcdn.com/w320/bd.png",
+    "BANGLADESH WOMEN": "https://flagcdn.com/w320/bd.png",
+    "BAN-W": "https://flagcdn.com/w320/bd.png",
+    "BAN W": "https://flagcdn.com/w320/bd.png",
+    # England
+    "ENG": "https://flagcdn.com/w320/gb-eng.png",
+    "ENGLAND": "https://flagcdn.com/w320/gb-eng.png",
+    "ENG WOMEN": "https://flagcdn.com/w320/gb-eng.png",
+    "ENGLAND WOMEN": "https://flagcdn.com/w320/gb-eng.png",
+    "ENG-W": "https://flagcdn.com/w320/gb-eng.png",
+    "ENG W": "https://flagcdn.com/w320/gb-eng.png",
+    # India
     "IND": "https://flagcdn.com/w320/in.png",
     "INDIA": "https://flagcdn.com/w320/in.png",
     "IND WOMEN": "https://flagcdn.com/w320/in.png",
     "IND-W": "https://flagcdn.com/w320/in.png",
     "IND W": "https://flagcdn.com/w320/in.png",
     "INDIA WOMEN": "https://flagcdn.com/w320/in.png",
-    "WI": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
-    "WEST INDIES": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
-    "WEST INDIES WOMEN": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
-    "WI WOMEN": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
-    "AUS": "https://flagcdn.com/w320/au.png",
-    "AUSTRALIA": "https://flagcdn.com/w320/au.png",
-    "AUS WOMEN": "https://flagcdn.com/w320/au.png",
-    "AUSTRALIA WOMEN": "https://flagcdn.com/w320/au.png",
+    # Ireland
+    "IRE": "https://flagcdn.com/w320/ie.png",
+    "IRELAND": "https://flagcdn.com/w320/ie.png",
+    "IRE WOMEN": "https://flagcdn.com/w320/ie.png",
+    "IRELAND WOMEN": "https://flagcdn.com/w320/ie.png",
+    "IRE-W": "https://flagcdn.com/w320/ie.png",
+    "IRE W": "https://flagcdn.com/w320/ie.png",
+    # New Zealand
     "NZ": "https://flagcdn.com/w320/nz.png",
     "NEW ZEALAND": "https://flagcdn.com/w320/nz.png",
     "NZ WOMEN": "https://flagcdn.com/w320/nz.png",
     "NEW ZEALAND WOMEN": "https://flagcdn.com/w320/nz.png",
-    "ENG": "https://flagcdn.com/w320/gb-eng.png",
-    "ENGLAND": "https://flagcdn.com/w320/gb-eng.png",
-    "ENG WOMEN": "https://flagcdn.com/w320/gb-eng.png",
+    "NZ-W": "https://flagcdn.com/w320/nz.png",
+    "NZ W": "https://flagcdn.com/w320/nz.png",
+    # Pakistan
     "PAK": "https://flagcdn.com/w320/pk.png",
     "PAKISTAN": "https://flagcdn.com/w320/pk.png",
+    "PAK WOMEN": "https://flagcdn.com/w320/pk.png",
+    "PAKISTAN WOMEN": "https://flagcdn.com/w320/pk.png",
+    "PAK-W": "https://flagcdn.com/w320/pk.png",
+    "PAK W": "https://flagcdn.com/w320/pk.png",
+    # South Africa
     "SA": "https://flagcdn.com/w320/za.png",
+    "RSA": "https://flagcdn.com/w320/za.png",
     "SOUTH AFRICA": "https://flagcdn.com/w320/za.png",
-    "BAN": "https://flagcdn.com/w320/bd.png",
-    "BANGLADESH": "https://flagcdn.com/w320/bd.png",
+    "SA WOMEN": "https://flagcdn.com/w320/za.png",
+    "SOUTH AFRICA WOMEN": "https://flagcdn.com/w320/za.png",
+    "SA-W": "https://flagcdn.com/w320/za.png",
+    "SA W": "https://flagcdn.com/w320/za.png",
+    # Sri Lanka
     "SL": "https://flagcdn.com/w320/lk.png",
     "SRI LANKA": "https://flagcdn.com/w320/lk.png",
-    "AFG": "https://flagcdn.com/w320/af.png",
-    "AFGHANISTAN": "https://flagcdn.com/w320/af.png",
-    "IRE": "https://flagcdn.com/w320/ie.png",
-    "IRELAND": "https://flagcdn.com/w320/ie.png",
+    "SL WOMEN": "https://flagcdn.com/w320/lk.png",
+    "SRI LANKA WOMEN": "https://flagcdn.com/w320/lk.png",
+    "SL-W": "https://flagcdn.com/w320/lk.png",
+    "SL W": "https://flagcdn.com/w320/lk.png",
+    # West Indies uses the cricket-team flag/logo rather than an individual country flag.
+    "WI": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
+    "WEST INDIES": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
+    "WEST INDIES WOMEN": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
+    "WI WOMEN": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
+    "WI-W": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
+    "WI W": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Flag_of_the_West_Indies_cricket_team.svg/320px-Flag_of_the_West_Indies_cricket_team.svg.png",
+    # Zimbabwe
     "ZIM": "https://flagcdn.com/w320/zw.png",
     "ZIMBABWE": "https://flagcdn.com/w320/zw.png",
     "ZIM-W": "https://flagcdn.com/w320/zw.png",
     "ZIM W": "https://flagcdn.com/w320/zw.png",
+    "ZIM WOMEN": "https://flagcdn.com/w320/zw.png",
     "ZIMBABWE WOMEN": "https://flagcdn.com/w320/zw.png",
-    "NEP": "https://flagcdn.com/w320/np.png",
-    "NEPAL": "https://flagcdn.com/w320/np.png",
-    "USA": "https://flagcdn.com/w320/us.png",
-    "UAE": "https://flagcdn.com/w320/ae.png",
-    "OMAN": "https://flagcdn.com/w320/om.png",
+    # Current / recent ICC Women's World Cup teams and common associate sides.
     "NED": "https://flagcdn.com/w320/nl.png",
     "NETHERLANDS": "https://flagcdn.com/w320/nl.png",
+    "NED WOMEN": "https://flagcdn.com/w320/nl.png",
+    "NETHERLANDS WOMEN": "https://flagcdn.com/w320/nl.png",
+    "NED-W": "https://flagcdn.com/w320/nl.png",
+    "NED W": "https://flagcdn.com/w320/nl.png",
     "SCOT": "https://flagcdn.com/w320/gb-sct.png",
     "SCOTLAND": "https://flagcdn.com/w320/gb-sct.png",
+    "SCOT WOMEN": "https://flagcdn.com/w320/gb-sct.png",
+    "SCOTLAND WOMEN": "https://flagcdn.com/w320/gb-sct.png",
+    "SCOT-W": "https://flagcdn.com/w320/gb-sct.png",
+    "SCOT W": "https://flagcdn.com/w320/gb-sct.png",
+    "THA": "https://flagcdn.com/w320/th.png",
+    "THAILAND": "https://flagcdn.com/w320/th.png",
+    "THA WOMEN": "https://flagcdn.com/w320/th.png",
+    "THAILAND WOMEN": "https://flagcdn.com/w320/th.png",
+    "THA-W": "https://flagcdn.com/w320/th.png",
+    "PNG": "https://flagcdn.com/w320/pg.png",
+    "PAPUA NEW GUINEA": "https://flagcdn.com/w320/pg.png",
+    "PNG WOMEN": "https://flagcdn.com/w320/pg.png",
+    "PNG-W": "https://flagcdn.com/w320/pg.png",
+    "USA": "https://flagcdn.com/w320/us.png",
+    "USA WOMEN": "https://flagcdn.com/w320/us.png",
+    "USA-W": "https://flagcdn.com/w320/us.png",
+    "UAE": "https://flagcdn.com/w320/ae.png",
+    "UNITED ARAB EMIRATES": "https://flagcdn.com/w320/ae.png",
+    "UAE WOMEN": "https://flagcdn.com/w320/ae.png",
+    "NEP": "https://flagcdn.com/w320/np.png",
+    "NEPAL": "https://flagcdn.com/w320/np.png",
+    "NEP WOMEN": "https://flagcdn.com/w320/np.png",
+    "NAM": "https://flagcdn.com/w320/na.png",
+    "NAMIBIA": "https://flagcdn.com/w320/na.png",
+    "NAM WOMEN": "https://flagcdn.com/w320/na.png",
+    "UGA": "https://flagcdn.com/w320/ug.png",
+    "UGANDA": "https://flagcdn.com/w320/ug.png",
+    "UGA WOMEN": "https://flagcdn.com/w320/ug.png",
+    "HKG": "https://flagcdn.com/w320/hk.png",
+    "HONG KONG": "https://flagcdn.com/w320/hk.png",
+    "HKG WOMEN": "https://flagcdn.com/w320/hk.png",
+    "TAN": "https://flagcdn.com/w320/tz.png",
+    "TANZANIA": "https://flagcdn.com/w320/tz.png",
+    "NIG": "https://flagcdn.com/w320/ng.png",
+    "NIGERIA": "https://flagcdn.com/w320/ng.png",
+    "RWA": "https://flagcdn.com/w320/rw.png",
+    "RWANDA": "https://flagcdn.com/w320/rw.png",
+    "KEN": "https://flagcdn.com/w320/ke.png",
+    "KENYA": "https://flagcdn.com/w320/ke.png",
+    "GER": "https://flagcdn.com/w320/de.png",
+    "GERMANY": "https://flagcdn.com/w320/de.png",
+    "ITA": "https://flagcdn.com/w320/it.png",
+    "ITALY": "https://flagcdn.com/w320/it.png",
+    "JPN": "https://flagcdn.com/w320/jp.png",
+    "JAPAN": "https://flagcdn.com/w320/jp.png",
+    "VAN": "https://flagcdn.com/w320/vu.png",
+    "VANUATU": "https://flagcdn.com/w320/vu.png",
+    "SAM": "https://flagcdn.com/w320/ws.png",
+    "SAMOA": "https://flagcdn.com/w320/ws.png",
+    "KUW": "https://flagcdn.com/w320/kw.png",
+    "KUWAIT": "https://flagcdn.com/w320/kw.png",
+    # Men's aliases kept for compatibility.
+    "AFG": "https://flagcdn.com/w320/af.png",
+    "AFGHANISTAN": "https://flagcdn.com/w320/af.png",
+    "NEP": "https://flagcdn.com/w320/np.png",
+    "NEPAL": "https://flagcdn.com/w320/np.png",
+    "OMAN": "https://flagcdn.com/w320/om.png",
+    "NED": "https://flagcdn.com/w320/nl.png",
 }
 
 # Historical fallback photos are used only if no URL image has been fetched.
@@ -110,6 +208,24 @@ CAPTAIN_DATABASE = {
     "AUSTRALIA": {
         "name": "Pat Cummins",
         "player_png": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Pat_Cummins_in_2023.png/800px-Pat_Cummins_in_2023.png",
+    },
+    # ICC women's player profile fallback supplied by the user (Sophie Molineux, ICC ID 67041).
+    # The same profile resolver can fetch any other ICC player's image from their profile URL.
+    "AUS-W": {
+        "name": "Sophie Molineux",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/67041.png",
+    },
+    "AUS W": {
+        "name": "Sophie Molineux",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/67041.png",
+    },
+    "AUS WOMEN": {
+        "name": "Sophie Molineux",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/67041.png",
+    },
+    "AUSTRALIA WOMEN": {
+        "name": "Sophie Molineux",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/67041.png",
     },
     "ENG": {
         "name": "Jos Buttler",
@@ -147,14 +263,22 @@ def normalize_team_name(team_name):
     return re.sub(r"\s+", " ", str(team_name or "").strip().upper().replace("_", " "))
 
 
+def normalize_team_base(team_name):
+    """Normalize common women/men team labels to their base team label."""
+    key = normalize_team_name(team_name)
+    key = re.sub(r"(?:\s+WOMEN|\s+WOMENS|\s+WOMAN|[-_\s]+W)$", "", key)
+    key = re.sub(r"[-_\s]+MEN$", "", key)
+    return key.strip()
+
+
 def get_team_flag_url(team_name):
+    """Return the country/team flag for men's and women's naming variants."""
     key = normalize_team_name(team_name)
     if key in TEAM_FLAG_DATABASE:
         return TEAM_FLAG_DATABASE[key]
-    # If input contains a common long name, allow the base country flag to resolve.
-    first = key.replace(" WOMEN", "").replace(" MEN", "")
-    if first in TEAM_FLAG_DATABASE:
-        return TEAM_FLAG_DATABASE[first]
+    base = normalize_team_base(key)
+    if base in TEAM_FLAG_DATABASE:
+        return TEAM_FLAG_DATABASE[base]
     return None
 
 
@@ -801,7 +925,7 @@ def resolve_player_image_url(player_url):
 
     # ICC player profile URLs such as /rankings/66833/shaheen-afridi map to player ID 66833.
     if "icc-cricket.com" in host:
-        player_id_match = re.search(r"/rankings/(\d+)(?:/|$)", parsed.path, re.I)
+        player_id_match = re.search(r"/(?:rankings|players|player|profile)/(\d+)(?:/|$)", parsed.path, re.I)
         if player_id_match:
             player_id = player_id_match.group(1)
             return (
@@ -1209,13 +1333,13 @@ TEAM_COLOR_PALETTES = {
 
 
 def team_palette(team_name):
-    """Return (main, accent, shadow) colors for a team label."""
+    """Return (main, accent, shadow) colors for men's and women's team label variants."""
     key = normalize_team_name(team_name)
     palette = TEAM_COLOR_PALETTES.get(key)
     if palette:
         return palette
-    key = key.replace(" WOMEN", "").replace(" MEN", "")
-    return TEAM_COLOR_PALETTES.get(key, ((24, 77, 185), (255, 145, 25), (5, 25, 75)))
+    base = normalize_team_base(key)
+    return TEAM_COLOR_PALETTES.get(base, ((24, 77, 185), (255, 145, 25), (5, 25, 75)))
 
 
 def draw_team_flag_watermark(canvas, flag_image, x, y, size, main_color, accent_color, opacity=225):
@@ -1414,7 +1538,7 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
 # STREAMLIT UI
 # =========================================================
 st.title("🏏 PREET SPORTS — 4K Cricket Thumbnail Studio")
-st.caption("Sharper, slightly larger player portraits; oversized LIVE; compact match badge and Hindi discussion banner; visible blue/green stadium, subtle team panels and compact badges; bold black/white nameplates; 3840 × 2160 PNG export.")
+st.caption("Sharper player portraits; LIVE → match badge → HINDI COMMENTARY; team-colour panels; men's and women's team flags; ICC player-profile URL support; 3840 × 2160 PNG export.")
 
 for key in [
     "p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front",
@@ -1473,15 +1597,15 @@ with col_left:
                     st.warning(err)
 
     st.subheader("2. Direct Captain Image URLs")
-    st.caption("Paste a direct image URL or an ICC player-profile URL. ICC profile pages are automatically resolved to their matching player image. For this IND-W vs ZIM-W preset, paste the desired player profile or direct image URLs below. Compact flags sit in the top corners; the right player is anchored to the far-right edge.")
+    st.caption("Paste a direct image URL or an ICC player-profile URL for EACH side. ICC URLs such as https://www.icc-cricket.com/rankings/67041/sophie-molineux are resolved to the matching official ICC player image. One profile URL supplies one player, not every team captain. Women’s team aliases and flags are supported; Australia Women defaults to Sophie Molineux unless you enter a different profile URL.")
     left_captain_url = st.text_input(
-        "Left Captain Image / ICC Profile URL (India Women)",
+        "Left Player Image / ICC Profile URL",
         value="",
         placeholder="Paste a direct image or ICC player-profile URL",
         key="left_captain_image_url",
     )
     right_captain_url = st.text_input(
-        "Right Captain Image / ICC Profile URL (Zimbabwe Women)",
+        "Right Player Image / ICC Profile URL",
         value="",
         placeholder="Paste a direct image or ICC player-profile URL",
         key="right_captain_image_url",
