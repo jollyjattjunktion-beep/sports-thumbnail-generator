@@ -1,1 +1,1 @@
-# sports-thumbnail-generator
+# sports-thumbnail
