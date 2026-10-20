@@ -21,7 +21,7 @@ st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v27-remote-url-bg-removal"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v28-center-stack-refined"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -1320,72 +1320,75 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     draw = ImageDraw.Draw(overlay)
     draw_brand_pill(draw, channel_text)
 
-    # Large red LIVE with a clean white stroke, similar to the first reference image.
-    font_live = load_robust_font(610)
-    live_y = 390
-    draw_centered_text(
+    # Central stack — keep the user's requested order and proportions:
+    # LIVE (largest) -> blue T20 / match-format pill -> compact Hindi commentary.
+    # The stack is narrower and positioned in the open centre to avoid covering player faces.
+    font_live = load_robust_font(470)
+    live_y = 430
+    _, _, _, live_h = draw_centered_text(
         draw, CANVAS_WIDTH, str(match_status or "LIVE"), live_y, font_live,
-        (232, 15, 23, 255), stroke_width=25, stroke_fill=(255, 255, 255, 255)
+        (232, 15, 23, 255), stroke_width=22, stroke_fill=(255, 255, 255, 255)
     )
 
-    # Blue rounded match badge directly under LIVE.
-    font_sub = load_robust_font(205)
-    badge_text = str(match_badge or "MATCH DAY")
+    # Match-format pill follows LIVE dynamically instead of using a fixed coordinate.
+    font_sub = load_robust_font(175)
+    badge_text = str(match_badge or "T20").strip().upper()
     sub_bbox = draw.textbbox((0, 0), badge_text, font=font_sub, stroke_width=0)
     sw, sh = sub_bbox[2] - sub_bbox[0], sub_bbox[3] - sub_bbox[1]
-    badge_w = sw + 200
-    badge_h = sh + 50
+    badge_pad_x = 76
+    badge_w = sw + badge_pad_x * 2
+    badge_h = max(190, sh + 34)
     bx0 = (CANVAS_WIDTH - badge_w) // 2
-    by0 = 930
+    by0 = live_y + live_h + 24
     draw_pill_badge(
         draw, (bx0, by0, bx0 + badge_w, by0 + badge_h),
-        (0, 72, 205, 255), (255, 255, 255, 255), 9, badge_h // 2
+        (0, 72, 205, 255), (255, 255, 255, 255), 8, badge_h // 2
     )
     tx = (CANVAS_WIDTH - sw) // 2
     ty = by0 + (badge_h - sh) // 2 - sub_bbox[1]
     draw.text((tx, ty), badge_text, font=font_sub, fill=(255, 230, 0, 255))
 
-    # Secondary Hindi Commentary box directly below the T20 / match-format badge.
-    # Palette: deep navy fill, saffron outer border, white inner border, yellow/white text.
+    # Compact Hindi Commentary banner directly under the format pill.
+    # Keep existing wording editable and avoid adding any extra slogans.
     commentary_label = str(commentary_text or "HINDI COMMENTARY").strip().upper()
     if commentary_label:
-        font_commentary = load_robust_font(92)
-        # Reduce the label font only if a user enters unusually long text.
-        while font_commentary.size > 64 and draw.textbbox((0, 0), commentary_label, font=font_commentary)[2] > 1750:
-            font_commentary = load_robust_font(font_commentary.size - 6)
+        font_commentary = load_robust_font(78)
+        while font_commentary.size > 56 and draw.textbbox((0, 0), commentary_label, font=font_commentary)[2] > 1450:
+            font_commentary = load_robust_font(font_commentary.size - 4)
         cbbox = draw.textbbox((0, 0), commentary_label, font=font_commentary)
         ctext_w = cbbox[2] - cbbox[0]
         ctext_h = cbbox[3] - cbbox[1]
-        commentary_w = ctext_w + 112
-        commentary_h = max(104, ctext_h + 34)
+        commentary_pad_x = 42
+        commentary_w = ctext_w + commentary_pad_x * 2
+        commentary_h = max(88, ctext_h + 26)
         commentary_x = (CANVAS_WIDTH - commentary_w) // 2
-        commentary_y = by0 + badge_h + 16
-        # Keep it safely above the team banners even if fonts vary by host.
+        commentary_y = by0 + badge_h + 12
+        # Keep the banner compact and safely above the bottom team nameplates.
         banner_top = CANVAS_HEIGHT - 360 - 95
         commentary_y = min(commentary_y, banner_top - commentary_h - 20)
         draw.rounded_rectangle(
             (commentary_x, commentary_y, commentary_x + commentary_w, commentary_y + commentary_h),
             radius=commentary_h // 2,
-            fill=(8, 24, 55, 245),
-            outline=(40, 105, 70, 255),
-            width=8,
+            fill=(8, 24, 55, 248),
+            outline=(255, 170, 20, 255),
+            width=9,
         )
-        inner_pad = 9
+        inner_pad = 8
         draw.rounded_rectangle(
             (commentary_x + inner_pad, commentary_y + inner_pad,
              commentary_x + commentary_w - inner_pad, commentary_y + commentary_h - inner_pad),
-            radius=max(20, commentary_h // 2 - inner_pad),
-            outline=(255, 255, 255, 230),
+            radius=max(18, commentary_h // 2 - inner_pad),
+            outline=(255, 255, 255, 235),
             width=3,
         )
-        # Split the default label so HINDI is highlighted yellow and COMMENTARY is white.
+        # Split the default label: yellow HINDI, white COMMENTARY.
         if commentary_label == "HINDI COMMENTARY":
             first_word, second_word = "HINDI", "COMMENTARY"
             first_bbox = draw.textbbox((0, 0), first_word, font=font_commentary)
             second_bbox = draw.textbbox((0, 0), second_word, font=font_commentary)
             first_w = first_bbox[2] - first_bbox[0]
             second_w = second_bbox[2] - second_bbox[0]
-            spacing = 18
+            spacing = 14
             start_x = (CANVAS_WIDTH - first_w - spacing - second_w) // 2
             text_y = commentary_y + (commentary_h - ctext_h) // 2 - cbbox[1]
             draw.text((start_x, text_y), first_word, font=font_commentary, fill=(255, 220, 0, 255))
