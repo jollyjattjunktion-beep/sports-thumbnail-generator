@@ -779,127 +779,127 @@ def remove_background_from_any_image(upload_bytes, filename="image", subject_ins
         )
 
 def convert_player_to_front_facing(upload_bytes, filename, side):
-    """Use Gemini Nano Banana to edit a cricket photo into a front-facing cutout.
+    """Use a locally running ComfyUI API workflow to create a front-facing player portrait.
 
-    Uses Google's REST Interactions API so the app doesn't require an extra SDK.
-    The call is user-triggered because image editing may incur API charges.
+    Configure an API-format workflow in Section 8. Set the image node ID/input and
+    positive-prompt node ID/input to match the exported ComfyUI workflow.
     Returns (PIL.Image or None, error message or None).
     """
-    api_key = get_gemini_api_key()
-    if not api_key:
-        return None, (
-            "Gemini image editing is not configured. Create a Gemini API key in Google AI Studio, "
-            "then add it in Render → Environment as GEMINI_API_KEY and redeploy. "
-            "Gemini API usage may be billed separately from your Gemini Pro subscription."
-        )
+    base_url = str(st.session_state.get("comfyui_url", os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188"))).strip().rstrip("/")
+    workflow_text = str(st.session_state.get("comfyui_workflow_json", os.environ.get("COMFYUI_API_WORKFLOW", ""))).strip()
+    image_node_id = str(st.session_state.get("comfyui_image_node_id", "")).strip()
+    image_input_name = str(st.session_state.get("comfyui_image_input_name", "image")).strip() or "image"
+    prompt_node_id = str(st.session_state.get("comfyui_prompt_node_id", "")).strip()
+    prompt_input_name = str(st.session_state.get("comfyui_prompt_input_name", "text")).strip() or "text"
+    if not workflow_text:
+        return None, "Paste a ComfyUI API-format workflow in Section 8. In ComfyUI, use Save (API Format) / Export API workflow."
+    if not image_node_id or not prompt_node_id:
+        return None, "Enter the ComfyUI Load Image node ID and positive prompt node ID in Section 8."
+    try:
+        workflow = json.loads(workflow_text)
+        if not isinstance(workflow, dict):
+            raise ValueError("Workflow must be a JSON object.")
+        if image_node_id not in workflow or prompt_node_id not in workflow:
+            return None, "The configured node IDs were not found in the workflow JSON. Check the IDs in Section 8."
+        if not isinstance(workflow[image_node_id].get("inputs"), dict) or not isinstance(workflow[prompt_node_id].get("inputs"), dict):
+            return None, "The selected image/prompt nodes do not have an inputs object. Use a ComfyUI API-format workflow."
+        if image_input_name not in workflow[image_node_id]["inputs"]:
+            return None, f"Image input '{image_input_name}' is not present on node {image_node_id}."
+        if prompt_input_name not in workflow[prompt_node_id]["inputs"]:
+            return None, f"Prompt input '{prompt_input_name}' is not present on node {prompt_node_id}."
+    except Exception as exc:
+        return None, f"Could not read ComfyUI workflow JSON: {exc}"
 
+    side_label = "left" if side == "left" else "right"
+    prompt = (
+        "Edit this same real cricket player into a photorealistic front-facing sports portrait. "
+        "Preserve recognizable identity, facial proportions, skin tone, hairstyle, age, and team uniform colors/design. "
+        "Head upright and directly toward camera; both eyes, both ears, and both shoulders visible; shoulders nearly square. "
+        "Frame from top of hair to waist or mid-torso, with generous margin around hair, ears, and shoulders. "
+        "Do not crop any part of the head or shoulders. Natural anatomy, realistic skin texture, crisp professional cricket photography. "
+        "No text, extra people, flags, logos added by AI, watermark, or props. "
+        "Use a flat pure magenta (#FF00FF) background edge-to-edge for easy local cutout; no gradient or shadows. "
+        f"Center the player for the {side_label} side of a 16:9 cricket thumbnail."
+    )
     try:
         with Image.open(io.BytesIO(upload_bytes)) as opened:
             opened.load()
             source = opened.convert("RGBA")
-            if max(source.size) > 1600:
-                scale = 1600 / max(source.size)
-                source = source.resize(
-                    (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
-                    Image.Resampling.LANCZOS,
-                )
-            # Photos go as compact JPEG; input cutouts keep their transparency as PNG.
-            has_alpha = source.getchannel("A").getextrema()[0] < 250
-            source_buffer = io.BytesIO()
-            if has_alpha:
-                source.save(source_buffer, format="PNG", optimize=False, compress_level=3)
-                mime_type = "image/png"
+            if max(source.size) > 1400:
+                scale = 1400 / float(max(source.size))
+                source = source.resize((max(1, int(source.width * scale)), max(1, int(source.height * scale))), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            if source.getchannel("A").getextrema()[0] < 250:
+                source.save(buf, format="PNG")
+                mime = "image/png"
             else:
-                source.convert("RGB").save(source_buffer, format="JPEG", quality=90, optimize=True)
-                mime_type = "image/jpeg"
-            source_bytes = source_buffer.getvalue()
-    except Exception as exc:
-        return None, f"Could not read the uploaded photo: {exc}"
-
-    side_label = "left" if side == "left" else "right"
-    prompt = (
-        "Edit the supplied real cricket-player photograph for a professional sports broadcast thumbnail. "
-        "Make the SAME player face directly forward toward the camera: head straight, both eyes visible, "
-        "nose and shoulders aligned naturally toward the lens, shoulders nearly square to camera. "
-        "Avoid side profile and avoid three-quarter pose. Preserve the person's recognizable identity, "
-        "facial proportions, skin tone, hairstyle, age, and the same team's uniform colors/design as closely "
-        "as possible. Frame from the top of the head to around the waist or mid-torso with both shoulders "
-        "and the jersey visible. Use realistic anatomy, photographic skin texture and crisp sports-photo detail. "
-        "Do not add text, flags, graphics, watermarks, other people, or props. "
-        "IMPORTANT CUTOUT REQUIREMENT: place the player against a perfectly flat, uniform pure magenta "
-        "background RGB(255, 0, 255), edge to edge. No gradient, texture, shadows, stadium, or colored rim light. "
-        "Keep magenta only in the empty background, never on the player. Center the player with a little margin "
-        f"around hair and shoulders for the {side_label} side of a 16:9 cricket thumbnail. Return one edited image."
-    )
-
-    request_body = {
-        "model": os.environ.get("GEMINI_IMAGE_MODEL", "gemini-nano-banana-2.1").strip(),
-        "input": [
-            {"type": "text", "text": prompt},
-            {
-                "type": "image",
-                "data": base64.b64encode(source_bytes).decode("ascii"),
-                "mime_type": mime_type,
-            },
-        ],
-        "response_format": {
-            "type": "image",
-            "mime_type": "image/jpeg",
-            "aspect_ratio": "3:4",
-            "image_size": "2K",
-        },
-    }
-
-    try:
-        response = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/interactions",
-            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json=request_body,
-            timeout=(15, 240),
+                source.convert("RGB").save(buf, format="JPEG", quality=90)
+                mime = "image/jpeg"
+        uploaded = requests.post(
+            base_url + "/upload/image",
+            files={"image": (os.path.basename(filename or "player.png"), buf.getvalue(), mime)},
+            data={"overwrite": "true"},
+            timeout=(10, 60),
         )
-        if response.status_code >= 400:
-            detail = ""
-            try:
-                err_json = response.json()
-                err = err_json.get("error", {}) if isinstance(err_json, dict) else {}
-                detail = err.get("message", "") if isinstance(err, dict) else str(err)
-            except Exception:
-                detail = response.text[:500]
-            if response.status_code in (401, 403):
-                return None, (
-                    "Gemini rejected the API key or permission (HTTP "
-                    f"{response.status_code}). Check GEMINI_API_KEY in Render and verify the key's project/API access. "
-                    + detail
-                ).strip()
-            if response.status_code == 429:
-                return None, (
-                    "Gemini API quota/rate limit reached (HTTP 429). Check your AI Studio API usage/billing or retry later. "
-                    + detail
-                ).strip()
-            return None, f"Gemini image editing failed (HTTP {response.status_code}). {detail}".strip()
-
-        payload = response.json()
-        image_block = _find_gemini_image_block(payload)
-        if not image_block:
-            return None, "Gemini returned no image. Try again or use a clearer, higher-resolution player photo."
-        encoded = image_block.get("data")
-        if not encoded:
-            return None, "Gemini's response did not contain image data."
-        image_bytes = base64.b64decode(encoded)
-        with Image.open(io.BytesIO(image_bytes)) as output_image:
-            output_image.load()
-            converted = output_image.convert("RGBA")
+        uploaded.raise_for_status()
+        upload_info = uploaded.json()
+        image_name = upload_info.get("name")
+        if not image_name:
+            return None, "ComfyUI upload succeeded but did not return an image filename."
+        workflow[image_node_id]["inputs"][image_input_name] = image_name
+        workflow[prompt_node_id]["inputs"][prompt_input_name] = prompt
+        queued = requests.post(base_url + "/prompt", json={"prompt": workflow}, timeout=(10, 60))
+        if queued.status_code >= 400:
+            detail = queued.text[:1200]
+            return None, f"ComfyUI rejected the workflow (HTTP {queued.status_code}). Check required model/node setup. {detail}"
+        prompt_id = queued.json().get("prompt_id")
+        if not prompt_id:
+            return None, "ComfyUI did not return a prompt_id. Check the server console for workflow errors."
+        import time
+        deadline = time.time() + 300
+        output_image = None
+        while time.time() < deadline:
+            history_response = requests.get(base_url + "/history/" + prompt_id, timeout=(5, 20))
+            history_response.raise_for_status()
+            history = history_response.json().get(prompt_id, {})
+            outputs = history.get("outputs", {})
+            for node_output in outputs.values():
+                for item in node_output.get("images", []):
+                    view = requests.get(
+                        base_url + "/view",
+                        params={"filename": item.get("filename", ""), "subfolder": item.get("subfolder", ""), "type": item.get("type", "output")},
+                        timeout=(10, 60),
+                    )
+                    view.raise_for_status()
+                    output_image = Image.open(io.BytesIO(view.content)).convert("RGBA")
+                    break
+                if output_image is not None:
+                    break
+            if output_image is not None:
+                break
+            status = history.get("status", {})
+            if status.get("completed") and not outputs:
+                return None, "ComfyUI finished without an image output. Ensure the workflow contains a Save Image node."
+            time.sleep(1)
+        if output_image is None:
+            return None, "Timed out waiting for ComfyUI (5 minutes). Check the ComfyUI queue and model performance."
         try:
-            converted = _remove_magenta_chroma_background(converted)
+            output_image = _remove_magenta_chroma_background(output_image)
         except ValueError as exc:
-            return None, str(exc)
-        return converted, None
+            # Some workflows can return true alpha; accept that rather than forcing a chroma key.
+            if output_image.getchannel("A").getextrema()[0] < 250:
+                pass
+            else:
+                return None, str(exc)
+        return output_image, None
+    except requests.ConnectionError:
+        return None, f"Cannot reach ComfyUI at {base_url}. Start ComfyUI first and verify its port (normally 8188)."
     except requests.Timeout:
-        return None, "Gemini pose conversion timed out. Try a smaller source photo or retry later."
+        return None, "ComfyUI request timed out. Check that the local model is loaded and the server is responsive."
     except requests.RequestException as exc:
-        return None, f"Could not reach the Gemini image-edit API: {exc}"
+        return None, f"ComfyUI API request failed: {exc}"
     except Exception as exc:
-        return None, f"Gemini pose conversion failed: {exc}"
+        return None, f"ComfyUI front-facing conversion failed: {exc}"
 
 @st.cache_data(show_spinner=False, ttl=86400, max_entries=64)
 def resolve_player_image_url(player_url):
@@ -2188,11 +2188,33 @@ with col_left:
         key="stadium_background_url",
     )
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
-    st.subheader("8. Optional AI Tool — Front-Facing Pose Conversion")
+    st.subheader("8. Local AI Tool — Front-Facing Pose Conversion (ComfyUI)")
     st.info(
-        "Everything else in this app—cropping, local background removal, cutout caching, thumbnail composition, and 4K PNG export—runs locally on this server and does not call Gemini. "
-        "Only the Convert LEFT/RIGHT buttons below call Gemini. Pose conversion needs a configured GEMINI_API_KEY and available image-model quota; it may incur separate API charges. "
-        "If Gemini is unavailable, continue using the local crop, background-removal, and thumbnail tools."
+        "Pose conversion uses your own ComfyUI server; no Gemini API key or hosted image API is used. "
+        "Run ComfyUI on this same PC (normally http://127.0.0.1:8188), paste an API-format workflow below, "
+        "and set the Load Image node ID plus the positive-prompt node ID. Your workflow must include a Save Image node."
+    )
+    comfy_col1, comfy_col2 = st.columns(2)
+    with comfy_col1:
+        st.text_input("ComfyUI server URL", value=os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188"), key="comfyui_url")
+        st.text_input("Load Image node ID", value=os.environ.get("COMFYUI_IMAGE_NODE_ID", ""), key="comfyui_image_node_id")
+        st.text_input("Image input name", value=os.environ.get("COMFYUI_IMAGE_INPUT_NAME", "image"), key="comfyui_image_input_name")
+    with comfy_col2:
+        st.text_input("Positive prompt node ID", value=os.environ.get("COMFYUI_PROMPT_NODE_ID", ""), key="comfyui_prompt_node_id")
+        st.text_input("Prompt input name", value=os.environ.get("COMFYUI_PROMPT_INPUT_NAME", "text"), key="comfyui_prompt_input_name")
+        if st.button("Test ComfyUI connection", key="test_comfyui_connection"):
+            try:
+                check = requests.get(st.session_state.get("comfyui_url", "http://127.0.0.1:8188").rstrip("/") + "/system_stats", timeout=5)
+                check.raise_for_status()
+                st.success("ComfyUI is reachable.")
+            except Exception as exc:
+                st.error(f"Cannot reach ComfyUI: {exc}")
+    st.session_state["comfyui_workflow_json"] = st.text_area(
+        "ComfyUI API workflow JSON",
+        value=os.environ.get("COMFYUI_API_WORKFLOW", ""),
+        height=180,
+        key="comfyui_workflow_json_input",
+        help="Paste the API-format JSON exported from ComfyUI. The configured Load Image and positive prompt nodes are replaced at run time."
     )
     col_up1, col_up2 = st.columns(2)
     with col_up1:
