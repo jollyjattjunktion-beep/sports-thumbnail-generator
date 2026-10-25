@@ -468,7 +468,7 @@ _canva_process_oauth_callback()
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v29-womens-flags-icc-profiles"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v30-match-talk-style"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -2058,7 +2058,15 @@ def draw_team_color_backplates(canvas, team1_name, team2_name, flag1, flag2):
 
 
 def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
-                       t1_name, t2_name, t1_flag, t2_flag, commentary_text="HINDI COMMENTARY"):
+                       t1_name, t2_name, t1_flag, t2_flag, commentary_text="HINDI COMMENTARY",
+                       design_style="PREET SPORTS — Match Talk (High Contrast)"):
+    if design_style == "PREET SPORTS — Match Talk (High Contrast)":
+        return generate_thumbnail_match_talk(
+            bg_img=bg_img, p1_img=p1_img, p2_img=p2_img,
+            channel_text=channel_text, match_status=match_status, match_badge=match_badge,
+            t1_name=t1_name, t2_name=t2_name, t1_flag=t1_flag, t2_flag=t2_flag,
+            commentary_text=commentary_text,
+        )
     # Real stadium first; use a hand-drawn stadium only if the remote image is unavailable.
     if bg_img is None:
         bg_img = fetch_default_stadium_background()
@@ -2177,11 +2185,214 @@ def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match
     return Image.alpha_composite(canvas, overlay)
 
 
+
+def high_ctr_team_label(team_name):
+    """Compact team abbreviations for the bold bottom banners used in Match Talk style."""
+    key = normalize_team_name(team_name).strip().upper()
+    aliases = {
+        "INDIA": "IND", "IND": "IND", "INDIA WOMEN": "IND-W", "IND WOMEN": "IND-W",
+        "IND-W": "IND-W", "IND W": "IND-W", "ENGLAND": "ENG", "ENG": "ENG",
+        "ENGLAND WOMEN": "ENG-W", "ENG WOMEN": "ENG-W", "ENG-W": "ENG-W",
+        "PAKISTAN": "PAK", "PAK": "PAK", "NEW ZEALAND": "NZ", "NZ": "NZ",
+        "NEW ZEALAND WOMEN": "NZ-W", "NZ WOMEN": "NZ-W", "NZ-W": "NZ-W",
+        "AUSTRALIA": "AUS", "AUS": "AUS", "AUSTRALIA WOMEN": "AUS-W", "AUS WOMEN": "AUS-W",
+        "SOUTH AFRICA": "SA", "SA": "SA", "SOUTH AFRICA WOMEN": "SA-W", "SA WOMEN": "SA-W",
+        "SRI LANKA": "SL", "SL": "SL", "WEST INDIES": "WI", "WI": "WI",
+        "BANGLADESH": "BAN", "BAN": "BAN", "AFGHANISTAN": "AFG", "AFG": "AFG",
+        "ZIMBABWE": "ZIM", "ZIM": "ZIM", "IRELAND": "IRE", "IRE": "IRE",
+        "NETHERLANDS": "NED", "NED": "NED", "SCOTLAND": "SCO", "SCO": "SCO",
+        "NEPAL": "NEP", "NEP": "NEP", "USA": "USA", "UAE": "UAE",
+        "NAMIBIA": "NAM", "NAM": "NAM", "CANADA": "CAN", "CAN": "CAN",
+        "HONG KONG": "HK", "HK": "HK",
+    }
+    if key in aliases:
+        return aliases[key]
+    if key.endswith(" WOMEN"):
+        base = key[:-6].strip()
+        if base in aliases:
+            return aliases[base] + "-W"
+    if key.endswith("-W") and key[:-2] in aliases:
+        return aliases[key[:-2]] + "-W"
+    words = re.findall(r"[A-Z0-9]+", key)
+    if len(words) >= 2:
+        return "".join(word[0] for word in words[:4])[:5] or key[:4]
+    return key[:5] or "TEAM"
+
+
+def render_match_talk_player(canvas, player_img, side):
+    """Large, clean side portrait with a soft outline shadow and no circular flag clutter."""
+    if player_img is None:
+        return
+    player = get_image_alpha_content(apply_sports_color_grade(player_img)).convert("RGBA")
+    max_w = int(CANVAS_WIDTH * 0.415)
+    max_h = int(CANVAS_HEIGHT * 0.98)
+    scale = min(max_w / max(1, player.width), max_h / max(1, player.height))
+    new_w = max(1, int(round(player.width * scale)))
+    new_h = max(1, int(round(player.height * scale)))
+    player = player.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    x = 0 if side == "left" else CANVAS_WIDTH - new_w
+    y = CANVAS_HEIGHT - new_h
+    alpha = player.getchannel("A")
+    shadow_alpha = alpha.filter(ImageFilter.MaxFilter(13)).filter(ImageFilter.GaussianBlur(9))
+    shadow_alpha = shadow_alpha.point(lambda value: int(value * 0.19))
+    shadow = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+    shadow.putalpha(shadow_alpha)
+    canvas.alpha_composite(shadow, (x, y))
+    canvas.alpha_composite(player, (x, y))
+
+
+def draw_match_talk_arrow(draw, x, y, width, height, label, side):
+    """Compact black team-code banner with yellow/white edge and inward-pointing notch."""
+    if side == "left":
+        points = [(x, y), (x + width - height // 2, y), (x + width, y + height // 2),
+                  (x + width - height // 2, y + height), (x, y + height)]
+    else:
+        points = [(x + height // 2, y), (x + width, y), (x + width, y + height),
+                  (x + height // 2, y + height), (x, y + height // 2)]
+    closed = points + [points[0]]
+    draw.polygon(points, fill=(0, 0, 0, 255))
+    draw.line(closed, fill=(255, 205, 20, 255), width=18, joint="curve")
+    draw.line(closed, fill=(255, 255, 255, 255), width=6, joint="curve")
+    label_font = load_robust_font(225)
+    max_w = int(width * 0.64)
+    while label_font.size > 82:
+        box = draw.textbbox((0, 0), label, font=label_font)
+        if box[2] - box[0] <= max_w:
+            break
+        label_font = load_robust_font(label_font.size - 8)
+    box = draw.textbbox((0, 0), label, font=label_font, stroke_width=2)
+    tw, th = box[2] - box[0], box[3] - box[1]
+    tx = x + (width - tw) // 2
+    ty = y + (height - th) // 2 - box[1]
+    draw.text((tx, ty), label, font=label_font, fill=(255, 255, 255, 255),
+              stroke_width=2, stroke_fill=(0, 0, 0, 255))
+
+
+def _center_font_fitted(draw, text, start_size, max_width, min_size=58):
+    font = load_robust_font(start_size)
+    while font.size > min_size:
+        box = draw.textbbox((0, 0), text, font=font)
+        if box[2] - box[0] <= max_width:
+            break
+        font = load_robust_font(font.size - 8)
+    return font
+
+
+def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
+                                  t1_name, t2_name, t1_flag, t2_flag, commentary_text="MATCH TALK"):
+    """High-contrast PREET SPORTS layout inspired by compact live-cricket thumbnails."""
+    if bg_img is None:
+        bg_img = fetch_default_stadium_background()
+    if bg_img is not None:
+        canvas = resize_cover(bg_img, CANVAS_WIDTH, CANVAS_HEIGHT)
+        canvas = canvas.filter(ImageFilter.GaussianBlur(0.55))
+        canvas = ImageEnhance.Brightness(canvas).enhance(1.06)
+        canvas = ImageEnhance.Color(canvas).enhance(1.20)
+        canvas = ImageEnhance.Contrast(canvas).enhance(1.09)
+        canvas = ImageEnhance.Sharpness(canvas).enhance(1.22)
+    else:
+        canvas = generate_procedural_stadium()
+
+    # Bright blue upper field and subtle green lower pitch tint: keep the stadium recognizable.
+    tint = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
+    td = ImageDraw.Draw(tint)
+    blue_end = int(CANVAS_HEIGHT * 0.61)
+    for y in range(0, blue_end, 10):
+        alpha = int(36 * (1 - y / max(1, blue_end)))
+        td.line((0, y, CANVAS_WIDTH, y), fill=(18, 112, 242, alpha), width=10)
+    td.rectangle((0, int(CANVAS_HEIGHT * 0.68), CANVAS_WIDTH, CANVAS_HEIGHT),
+                 fill=(0, 78, 22, 19))
+    canvas = Image.alpha_composite(canvas, tint)
+
+    # Team-tinted side wedges frame the players but leave the centre clean for the LIVE stack.
+    left_main, left_accent, left_dark = team_palette(t1_name)
+    right_main, right_accent, right_dark = team_palette(t2_name)
+    panels = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(panels)
+    w, h = CANVAS_WIDTH, CANVAS_HEIGHT
+    pd.polygon([(0, 0), (int(w * 0.26), 0), (int(w * 0.37), h), (0, h)],
+               fill=(*left_main, 45))
+    pd.polygon([(w, 0), (int(w * 0.74), 0), (int(w * 0.63), h), (w, h)],
+               fill=(*right_main, 45))
+    pd.polygon([(int(w * 0.22), 0), (int(w * 0.245), 0), (int(w * 0.34), h),
+                (int(w * 0.315), h)], fill=(*left_accent, 70))
+    pd.polygon([(int(w * 0.78), 0), (int(w * 0.755), 0), (int(w * 0.66), h),
+                (int(w * 0.685), h)], fill=(*right_accent, 70))
+    canvas = Image.alpha_composite(canvas, panels)
+
+    render_match_talk_player(canvas, p1_img, "left")
+    render_match_talk_player(canvas, p2_img, "right")
+
+    overlay = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    draw_brand_pill(draw, channel_text)
+
+    # Large red LIVE with outer dark outline and inner white keyline for small-screen readability.
+    live_text = str(match_status or "LIVE").strip().upper()
+    live_font = _center_font_fitted(draw, live_text, 500, int(w * 0.53), 76)
+    live_y = 405
+    live_box = draw.textbbox((0, 0), live_text, font=live_font)
+    live_h = live_box[3] - live_box[1]
+    draw_centered_text(
+        draw, w, live_text, live_y + 8, live_font, (8, 10, 18, 255),
+        stroke_width=44, stroke_fill=(8, 10, 18, 255)
+    )
+    draw_centered_text(
+        draw, w, live_text, live_y, live_font, (232, 15, 23, 255),
+        stroke_width=25, stroke_fill=(255, 255, 255, 255)
+    )
+    draw_centered_text(draw, w, live_text, live_y, live_font, (232, 15, 23, 255))
+
+    # Yellow format strip supports formats such as T20, 2ND T20, or 1ST ODI.
+    badge_text = str(match_badge or "T20").strip().upper()
+    badge_font = _center_font_fitted(draw, badge_text, 144, int(w * 0.39), 60)
+    badge_box = draw.textbbox((0, 0), badge_text, font=badge_font)
+    badge_tw, badge_th = badge_box[2] - badge_box[0], badge_box[3] - badge_box[1]
+    badge_w = min(int(w * 0.48), badge_tw + 132)
+    badge_h = max(150, badge_th + 54)
+    badge_x = (w - badge_w) // 2
+    badge_y = live_y + live_h + 48
+    draw.rounded_rectangle((badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
+                           radius=25, fill=(255, 218, 20, 255),
+                           outline=(5, 10, 20, 255), width=16)
+    draw.rounded_rectangle((badge_x + 8, badge_y + 8, badge_x + badge_w - 8, badge_y + badge_h - 8),
+                           radius=20, outline=(255, 255, 255, 255), width=5)
+    badge_tx = (w - badge_tw) // 2
+    badge_ty = badge_y + (badge_h - badge_th) // 2 - badge_box[1]
+    draw.text((badge_tx, badge_ty), badge_text, font=badge_font, fill=(8, 15, 24, 255))
+
+    talk_text = str(commentary_text or "MATCH TALK").strip().upper()
+    if talk_text:
+        talk_font = _center_font_fitted(draw, talk_text, 94, int(w * 0.42), 52)
+        talk_box = draw.textbbox((0, 0), talk_text, font=talk_font)
+        talk_tw, talk_th = talk_box[2] - talk_box[0], talk_box[3] - talk_box[1]
+        talk_w = min(int(w * 0.51), talk_tw + 104)
+        talk_h = max(112, talk_th + 42)
+        talk_x = (w - talk_w) // 2
+        talk_y = badge_y + badge_h + 18
+        draw.rounded_rectangle((talk_x, talk_y, talk_x + talk_w, talk_y + talk_h),
+                               radius=18, fill=(5, 18, 38, 255),
+                               outline=(255, 205, 20, 255), width=14)
+        talk_tx = (w - talk_tw) // 2
+        talk_ty = talk_y + (talk_h - talk_th) // 2 - talk_box[1]
+        draw.text((talk_tx, talk_ty), talk_text, font=talk_font, fill=(255, 255, 255, 255),
+                  stroke_width=2, stroke_fill=(0, 0, 0, 255))
+
+    # Minimal bottom arrows carry short team identifiers; no circular flags compete with faces.
+    team_y = CANVAS_HEIGHT - 355
+    team_w, team_h = 1220, 300
+    draw_match_talk_arrow(draw, 0, team_y, team_w, team_h, high_ctr_team_label(t1_name), "left")
+    draw_match_talk_arrow(draw, CANVAS_WIDTH - team_w, team_y, team_w, team_h,
+                          high_ctr_team_label(t2_name), "right")
+
+    return Image.alpha_composite(canvas, overlay)
+
+
 # =========================================================
 # STREAMLIT UI
 # =========================================================
 st.title("🏏 PREET SPORTS — 4K Cricket Thumbnail Studio")
-st.caption("Sharper player portraits; LIVE → match badge → HINDI COMMENTARY; team-colour panels; men's and women's team flags; ICC player-profile URL support; 3840 × 2160 PNG export.")
+st.caption("Two selectable 4K layouts: PREET SPORTS Match Talk (high contrast, inspired by compact live-cricket thumbnails) and the original Classic layout. 3840 × 2160 PNG export.")
 
 for key in [
     "p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front",
@@ -2366,12 +2577,38 @@ with col_left:
         help="Swaps only the player images. Team names, flags and team panels remain in their left/right positions.",
     )
 
+    design_style = st.selectbox(
+        "Thumbnail Design Style",
+        options=[
+            "PREET SPORTS — Match Talk (High Contrast)",
+            "PREET SPORTS — Classic",
+        ],
+        index=0,
+        key="thumbnail_design_style_v1",
+        help="Match Talk uses a brighter stadium, large red LIVE, a yellow match-format strip, a dark talk strip, and compact team-code banners. Classic preserves the earlier design.",
+    )
+
     col_status, col_badge = st.columns(2)
     with col_status:
         match_status = st.text_input("Main Text", value="LIVE", key="match_status_input")
     with col_badge:
-        match_badge = st.text_input("Match Format / Badge", value="T20", key="match_badge_input")
-    commentary_text = st.text_input("Box below T20 badge", value="HINDI COMMENTARY", key="commentary_text_input")
+        match_badge = st.text_input(
+            "Match Format / Number Badge (e.g. 2nd T20, 1st ODI)",
+            value="T20",
+            key="match_badge_input",
+        )
+    if design_style == "PREET SPORTS — Match Talk (High Contrast)":
+        commentary_text = st.text_input(
+            "Box below the format badge",
+            value="MATCH TALK",
+            key="commentary_text_matchtalk_input",
+        )
+    else:
+        commentary_text = st.text_input(
+            "Box below T20 badge",
+            value="HINDI COMMENTARY",
+            key="commentary_text_input",
+        )
     channel_title = st.text_input("Channel Brand", value="PREET SPORTS", key="channel_title_input")
 
     st.subheader("4. Remove Background from Any Image")
@@ -3230,6 +3467,7 @@ render_signature = (
     str(match_status),
     str(match_badge),
     str(commentary_text),
+    str(design_style),
     _image_cache_key(bg_final),
     _image_cache_key(p1_final),
     _image_cache_key(p2_final),
@@ -3251,6 +3489,7 @@ if st.session_state.get("_thumbnail_signature") != render_signature:
             t1_flag=flag1,
             t2_flag=flag2,
             commentary_text=commentary_text,
+            design_style=design_style,
         )
         # Hard guard: the downloadable file must always be exactly 3840 x 2160.
         # The render pipeline itself uses this canvas natively; this also protects against stale/modified renderers.
