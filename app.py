@@ -2225,24 +2225,30 @@ with col_left:
         attempts, loaded = 0, 0
         if left_captain_url.strip():
             attempts += 1
-            resolved_left_url = resolve_player_image_url(left_captain_url.strip())
-            image_left = fetch_online_image(resolved_left_url) if resolved_left_url else None
+            image_left, left_error = fetch_icc_player_image(left_captain_url.strip(), attempts=3)
             if image_left is not None:
                 st.session_state.p1_cutout = image_left
                 st.session_state["p1_cutout_source"] = "captain_url"
                 loaded += 1
             else:
-                st.error("Left image could not be downloaded. Check that the URL is public and points directly to an image.")
+                st.error(
+                    "Left player image fetch failed: "
+                    + str(left_error or "unknown download error")
+                    + ". Check the URL or try a direct public image link."
+                )
         if right_captain_url.strip():
             attempts += 1
-            resolved_right_url = resolve_player_image_url(right_captain_url.strip())
-            image_right = fetch_online_image(resolved_right_url) if resolved_right_url else None
+            image_right, right_error = fetch_icc_player_image(right_captain_url.strip(), attempts=3)
             if image_right is not None:
                 st.session_state.p2_cutout = image_right
                 st.session_state["p2_cutout_source"] = "captain_url"
                 loaded += 1
             else:
-                st.error("Right image could not be downloaded. Check that the URL is public and points directly to an image.")
+                st.error(
+                    "Right player image fetch failed: "
+                    + str(right_error or "unknown download error")
+                    + ". Check the URL or try a direct public image link."
+                )
         if attempts == 0:
             st.warning("Paste at least one captain image URL first.")
         elif loaded:
