@@ -238,6 +238,7 @@ class _CanvaMCPClient:
         self.session_id = None
         self.request_id = 0
         self.protocol_version = "2025-03-26"
+        self.initialized = False
 
     def _post(self, payload):
         headers = {
@@ -245,12 +246,24 @@ class _CanvaMCPClient:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        # MCP requires the negotiated protocol version on requests after the
+        # initialize handshake even when the server chooses stateless HTTP and
+        # does not issue an Mcp-Session-Id. Do not send it on the initial request.
+        if self.initialized:
+            headers["MCP-Protocol-Version"] = self.protocol_version
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
-            headers["MCP-Protocol-Version"] = self.protocol_version
-        response = self.http.post(CANVA_MCP_URL, json=payload, headers=headers, timeout=(15, 90))
+        try:
+            response = self.http.post(CANVA_MCP_URL, json=payload, headers=headers, timeout=(15, 90))
+        except Exception as exc:
+            phase = "initialize request" if not self.initialized else str(payload.get("method", "MCP request"))
+            raise RuntimeError(f"Canva MCP {phase} transport failed: {exc}") from exc
         self.session_id = response.headers.get("Mcp-Session-Id") or response.headers.get("MCP-Session-Id") or self.session_id
-        return _canva_parse_mcp_response(response)
+        try:
+            return _canva_parse_mcp_response(response)
+        except Exception as exc:
+            phase = "initialize request" if not self.initialized else str(payload.get("method", "MCP request"))
+            raise RuntimeError(f"Canva MCP {phase} failed: {exc}") from exc
 
     def initialize(self):
         self.request_id += 1
@@ -268,6 +281,7 @@ class _CanvaMCPClient:
         accepted_version = server_result.get("protocolVersion")
         if accepted_version:
             self.protocol_version = accepted_version
+        self.initialized = True
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
 
     def call_tool(self, name, arguments):
