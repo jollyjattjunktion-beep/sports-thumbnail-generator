@@ -2358,6 +2358,8 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     live_y = int(h * 0.205)
     draw_centered_text(draw, w, live_text, live_y + 18, live_font, (4, 6, 12, 255),
                        stroke_width=38, stroke_fill=(4, 6, 12, 255))
+    draw_centered_text(draw, w, live_text, live_y, live_font, (255, 255, 255, 255),
+                       stroke_width=34, stroke_fill=(255, 255, 255, 255))
     draw_centered_text(draw, w, live_text, live_y, live_font, (230, 8, 19, 255),
                        stroke_width=20, stroke_fill=(6, 6, 6, 255))
 
@@ -2413,7 +2415,7 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 
     # Red MATCH TALK strip directly below the split format badge.
     talk_text = str(commentary_text or "MATCH TALK").strip().upper()
-    talk_font = _center_font_fitted(draw, talk_text, 158, int(w * 0.43) - 70, 58)
+    talk_font = _center_font_fitted(draw, talk_text, 190, int(w * 0.43) - 70, 58)
     talk_box = draw.textbbox((0, 0), talk_text, font=talk_font)
     talk_tw, talk_th = talk_box[2] - talk_box[0], talk_box[3] - talk_box[1]
     talk_w = min(int(w * 0.44), max(int(w * 0.37), talk_tw + 100))
