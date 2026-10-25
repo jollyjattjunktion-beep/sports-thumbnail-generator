@@ -3302,16 +3302,18 @@ with col_right:
             st.warning("Connect Canva in Section 8 before using full-thumbnail pose editing.")
         else:
             full_thumb_prompt = (
-                "EDIT THE PROVIDED EXISTING 16:9 CRICKET YOUTUBE THUMBNAIL. Make a localized pose edit only. "
-                "Change BOTH visible cricket players, the left player and the right player, from side-facing or three-quarter "
-                "poses to direct front-facing poses, looking straight at the camera with both eyes visible and shoulders "
-                "nearly square. Preserve each same person's identity as closely as possible: face shape, age, skin tone, "
-                "hair and facial hair, expression, body build, and their exact team jersey colors, patterns, sponsors and logos. "
-                "Keep both players in their same left/right positions and at the same approximate scale and crop. "
-                "LOCK EVERYTHING ELSE: do not change the PREET SPORTS logo, any words or typography, LIVE, T20, HINDI COMMENTARY, "
-                "ENG or PAK labels, flags, stadium, lighting, colors, borders, diagonal panels, shadows, spacing, or composition. "
-                "Do not invent, remove, translate, redraw, or move text or logos. Do not add objects or people. "
-                "Keep the original 16:9 layout and all design elements in their exact positions. Only adjust the two players' poses."
+                f"EDIT THE PROVIDED EXISTING 16:9 PREET SPORTS CRICKET YOUTUBE THUMBNAIL. Make a localized pose edit only. "
+                f"Change BOTH visible cricket players: the LEFT player representing {team1} and the RIGHT player representing {team2}, "
+                "from side-facing or three-quarter poses to direct front-facing poses, looking straight at the camera with both "
+                "eyes visible and shoulders nearly square. Preserve each same person's identity as closely as possible: face shape, "
+                "age, skin tone, hair and facial hair, expression, body build, and exact team jersey colors, patterns, sponsor marks "
+                "and logos. Keep both players in their original left/right positions and at the same approximate scale and crop; "
+                "show the full hair and shoulders without cutting off the head. "
+                "LOCK EVERYTHING ELSE: do not change the PREET SPORTS logo, any words or typography, LIVE, match-format badge, "
+                "commentary banner, team abbreviations, flags, stadium, lighting, grass, crowd, colors, borders, diagonal panels, "
+                "shadows, spacing, or composition. Do not invent, remove, misspell, translate, redraw, or move any text, badge, "
+                "logo or flag. Do not add objects or people. Keep the original layout and all design elements in their exact positions. "
+                "Only adjust the two players' poses. Photorealistic result."
             )
             with st.spinner("Sending the complete thumbnail to Canva AI. One generation job may use Canva AI allowance…"):
                 edited_thumb, edit_error = _canva_mcp_edit_player(
@@ -3319,7 +3321,7 @@ with col_right:
                     full_thumb_prompt,
                     aspect_ratio="LANDSCAPE_16_9",
                     max_edge=2000,
-                    user_intent="Edit this finished cricket thumbnail by changing only both player poses to face the camera.",
+                    user_intent=f"Edit this finished {team1} vs {team2} cricket thumbnail by changing only both player poses to face the camera.",
                     remove_magenta=False,
                 )
             if edited_thumb is not None:
