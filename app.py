@@ -468,7 +468,7 @@ _canva_process_oauth_callback()
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v32-live-outline-spacing-fix"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v33-reference-final-spacing"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -2457,8 +2457,8 @@ def draw_match_talk_arrow(draw, x, y, width, height, label, side):
                   (x + height // 2, y + height), (x, y + height // 2)]
     draw.polygon(points, fill=(0, 0, 0, 255))
     draw.line(points + [points[0]], fill=(255, 205, 0, 255), width=22, joint="curve")
-    label_font = load_robust_font(180)
-    max_w = int(width * 0.62)
+    label_font = load_robust_font(500)
+    max_w = int(width * 0.76)
     while label_font.size > 82:
         box = draw.textbbox((0, 0), label, font=label_font)
         if box[2] - box[0] <= max_w:
@@ -2530,7 +2530,8 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     left_main, left_accent, _ = team_palette(t1_name)
     right_main, right_accent, _ = team_palette(t2_name)
     emblem_size = 460
-    draw_team_flag_watermark(canvas, t1_flag, 0, 42, emblem_size, left_main, left_accent, opacity=238)
+    # The reference uses a single circular team badge at the upper-right; it does not place a second
+    # giant flag circle behind the left player's head.
     draw_team_flag_watermark(canvas, t2_flag, w - emblem_size, 42, emblem_size, right_main, right_accent, opacity=238)
 
     # Large left/right player cutouts, placed behind the central text and bottom team plates.
@@ -2561,7 +2562,7 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     # Huge red LIVE headline with black depth and keyline, centered in the open sky.
     live_text = str(match_status or "LIVE").strip().upper()
     live_font = _center_font_fitted(draw, live_text, 490, int(w * 0.42), 72)
-    live_y = int(h * 0.18)
+    live_y = int(h * 0.105)
     # Three clean layers: one restrained black shadow, one white keyline, then pure red fill.
     # The old black inner stroke over the white outline made LIVE look excessively chunky.
     draw_centered_text(draw, w, live_text, live_y + 12, live_font, (0, 0, 0, 255),
@@ -2588,7 +2589,8 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
         left_panel_w = 0
     badge_h = int(h * 0.13)
     badge_x = (w - badge_w) // 2
-    badge_y = int(h * 0.435)
+    # Place the split badge directly beneath the LIVE outline, like the reference.
+    badge_y = int(h * 0.295)
     draw.rectangle((badge_x - 14, badge_y - 14, badge_x + badge_w + 14, badge_y + badge_h + 14),
                    fill=(3, 7, 15, 255))
     draw.rectangle((badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
@@ -2622,13 +2624,13 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 
     # Red MATCH TALK strip directly below the split format badge.
     talk_text = str(commentary_text or "MATCH TALK").strip().upper()
-    talk_font = _center_font_fitted(draw, talk_text, 128, int(w * 0.36) - 58, 52)
+    talk_font = _center_font_fitted(draw, talk_text, 230, int(w * 0.36) - 58, 52)
     talk_box = draw.textbbox((0, 0), talk_text, font=talk_font)
     talk_tw, talk_th = talk_box[2] - talk_box[0], talk_box[3] - talk_box[1]
-    talk_w = min(int(w * 0.35), max(int(w * 0.32), talk_tw + 84))
-    talk_h = int(h * 0.125)
+    talk_w = min(int(w * 0.36), max(int(w * 0.33), talk_tw + 84))
+    talk_h = int(h * 0.15)
     talk_x = (w - talk_w) // 2
-    talk_y = int(h * 0.605)
+    talk_y = int(h * 0.455)
     draw.rectangle((talk_x - 12, talk_y - 12, talk_x + talk_w + 12, talk_y + talk_h + 12),
                    fill=(4, 8, 15, 255))
     draw.rectangle((talk_x, talk_y, talk_x + talk_w, talk_y + talk_h),
@@ -2639,9 +2641,9 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
               stroke_width=2, stroke_fill=(20, 12, 12, 255))
 
     # Black bottom plates with yellow outlines; arrows point inward from both sides.
-    team_y = int(h * 0.80)
+    team_y = int(h * 0.665)
     team_w = int(w * 0.405)
-    team_h = int(h * 0.15)
+    team_h = int(h * 0.27)
     draw_match_talk_arrow(draw, 0, team_y, team_w, team_h, high_ctr_team_label(t1_name), "left")
     draw_match_talk_arrow(draw, w - team_w, team_y, team_w, team_h, high_ctr_team_label(t2_name), "right")
 
