@@ -965,6 +965,13 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
     image_input_name = str(st.session_state.get("comfyui_image_input_name", "image")).strip() or "image"
     prompt_node_id = str(st.session_state.get("comfyui_prompt_node_id", "")).strip()
     prompt_input_name = str(st.session_state.get("comfyui_prompt_input_name", "text")).strip() or "text"
+    # Optional auth for a privately hosted ComfyUI-compatible endpoint. Store the token
+    # in Render environment variables where possible; never commit it into app.py.
+    api_token = str(
+        st.session_state.get("comfyui_api_token", "")
+        or os.environ.get("COMFYUI_API_TOKEN", "")
+    ).strip()
+    request_headers = {"Authorization": f"Bearer {api_token}"} if api_token else {}
     if not workflow_text:
         return None, "Paste a ComfyUI API-format workflow in Section 8. In ComfyUI, use Save (API Format) / Export API workflow."
     if not image_node_id or not prompt_node_id:
@@ -986,14 +993,16 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
 
     side_label = "left" if side == "left" else "right"
     prompt = (
-        "Edit this same real cricket player into a photorealistic front-facing sports portrait. "
-        "Preserve recognizable identity, facial proportions, skin tone, hairstyle, age, and team uniform colors/design. "
-        "Head upright and directly toward camera; both eyes, both ears, and both shoulders visible; shoulders nearly square. "
-        "Frame from top of hair to waist or mid-torso, with generous margin around hair, ears, and shoulders. "
-        "Do not crop any part of the head or shoulders. Natural anatomy, realistic skin texture, crisp professional cricket photography. "
-        "No text, extra people, flags, logos added by AI, watermark, or props. "
-        "Use a flat pure magenta (#FF00FF) background edge-to-edge for easy local cutout; no gradient or shadows. "
-        f"Center the player for the {side_label} side of a 16:9 cricket thumbnail."
+        "IDENTITY-PRESERVING PHOTO EDIT, not a new person and not a redesign. Use the uploaded image as the identity reference. "
+        "Keep the exact same real cricket player: preserve facial identity, face shape, eye spacing, nose, lips, jaw, skin tone, "
+        "hairline, hairstyle, age, expression, body build, jersey details, and any visible authentic logos. "
+        "Make the smallest plausible change needed to turn the head and upper torso toward the camera. "
+        "Front-facing head, eyes looking at camera, both eyes visible, shoulders nearly square; natural anatomy and realistic skin texture. "
+        "Keep original identity and uniform more important than pose perfection. Do not beautify, replace, average, or invent a face. "
+        "Do not add text, extra people, flags, logos, watermark, or props. "
+        "Frame from top of hair to mid-torso with generous margins around the hair, ears, and shoulders; do not crop the head or shoulders. "
+        "Use a flat pure magenta (#FF00FF) background edge-to-edge for local cutout; no gradient or cast shadow. "
+        f"Center the same player for the {side_label} side of a 16:9 cricket thumbnail."
     )
     try:
         with Image.open(io.BytesIO(upload_bytes)) as opened:
@@ -1013,6 +1022,7 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
             base_url + "/upload/image",
             files={"image": (os.path.basename(filename or "player.png"), buf.getvalue(), mime)},
             data={"overwrite": "true"},
+            headers=request_headers,
             timeout=(10, 60),
         )
         uploaded.raise_for_status()
@@ -1022,7 +1032,7 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
             return None, "ComfyUI upload succeeded but did not return an image filename."
         workflow[image_node_id]["inputs"][image_input_name] = image_name
         workflow[prompt_node_id]["inputs"][prompt_input_name] = prompt
-        queued = requests.post(base_url + "/prompt", json={"prompt": workflow}, timeout=(10, 60))
+        queued = requests.post(base_url + "/prompt", json={"prompt": workflow}, headers=request_headers, timeout=(10, 60))
         if queued.status_code >= 400:
             detail = queued.text[:1200]
             return None, f"ComfyUI rejected the workflow (HTTP {queued.status_code}). Check required model/node setup. {detail}"
@@ -1033,7 +1043,7 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
         deadline = time.time() + 300
         output_image = None
         while time.time() < deadline:
-            history_response = requests.get(base_url + "/history/" + prompt_id, timeout=(5, 20))
+            history_response = requests.get(base_url + "/history/" + prompt_id, headers=request_headers, timeout=(5, 20))
             history_response.raise_for_status()
             history = history_response.json().get(prompt_id, {})
             outputs = history.get("outputs", {})
@@ -1042,6 +1052,7 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
                     view = requests.get(
                         base_url + "/view",
                         params={"filename": item.get("filename", ""), "subfolder": item.get("subfolder", ""), "type": item.get("type", "output")},
+                        headers=request_headers,
                         timeout=(10, 60),
                     )
                     view.raise_for_status()
@@ -2423,18 +2434,27 @@ with col_left:
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
     st.subheader("8. Local AI Tool — Front-Facing Pose Conversion (ComfyUI)")
     st.info(
-        "Pose conversion uses ComfyUI and does not require Gemini. Use the buttons below to convert either an uploaded photo "
-        "or the currently selected ICC/URL captain portrait. The workflow should preserve identity and produce a front-facing "
-        "head-and-shoulders portrait on a pure magenta background. Keep in mind AI can alter faces, so inspect each result."
+        "Open-source ComfyUI workflow integration; no Gemini or paid AI API is called by this app. The prompt prioritizes keeping "
+        "the same player's identity while changing pose, but diffusion models can still alter facial details. Use an identity-aware "
+        "workflow (for example, InstantID/IPAdapter FaceID where licensing and model requirements permit), low denoise, and inspect results."
     )
     st.warning(
-        "Important for the Render website: http://127.0.0.1:8188 points to the Render server, not your home PC. "
-        "For free local processing, run this Streamlit app and ComfyUI on the same PC. If using Render, the ComfyUI server "
-        "must be securely reachable from Render; do not expose an unauthenticated ComfyUI server to the public internet."
+        "Render limitation: this app does not include a hosted AI model and Render's standard web service is not a free GPU. "
+        "A Render deployment cannot reach your PC at 127.0.0.1. You must provide a running ComfyUI-compatible endpoint reachable "
+        "from Render (self-hosted compute or a free service if available). Free GPU availability is not guaranteed, CPU generation "
+        "may be extremely slow, and no public endpoint should be exposed without access controls. If no endpoint is configured, "
+        "the original portrait and existing 4K thumbnail workflow continue to work."
     )
     comfy_col1, comfy_col2 = st.columns(2)
     with comfy_col1:
         st.text_input("ComfyUI server URL", value=os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188"), key="comfyui_url")
+        st.text_input(
+            "ComfyUI API bearer token (optional)",
+            value=os.environ.get("COMFYUI_API_TOKEN", ""),
+            type="password",
+            key="comfyui_api_token",
+            help="Prefer setting COMFYUI_API_TOKEN in Render Environment. Only works if your ComfyUI-compatible endpoint supports Bearer authentication.",
+        )
         st.text_input("Load Image node ID", value=os.environ.get("COMFYUI_IMAGE_NODE_ID", ""), key="comfyui_image_node_id")
         st.text_input("Image input name", value=os.environ.get("COMFYUI_IMAGE_INPUT_NAME", "image"), key="comfyui_image_input_name")
     with comfy_col2:
@@ -2442,7 +2462,13 @@ with col_left:
         st.text_input("Prompt input name", value=os.environ.get("COMFYUI_PROMPT_INPUT_NAME", "text"), key="comfyui_prompt_input_name")
         if st.button("Test ComfyUI connection", key="test_comfyui_connection"):
             try:
-                check = requests.get(st.session_state.get("comfyui_url", "http://127.0.0.1:8188").rstrip("/") + "/system_stats", timeout=5)
+                token = str(st.session_state.get("comfyui_api_token", "") or os.environ.get("COMFYUI_API_TOKEN", "")).strip()
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                check = requests.get(
+                    st.session_state.get("comfyui_url", "http://127.0.0.1:8188").rstrip("/") + "/system_stats",
+                    headers=headers,
+                    timeout=5,
+                )
                 check.raise_for_status()
                 st.success("ComfyUI is reachable.")
             except Exception as exc:
@@ -2790,4 +2816,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run locally without Gemini API calls. Model weights are never downloaded during user interactions. Gemini is used only when you explicitly press a front-facing pose conversion button. Local segmentation may leave overlapping text/graphics and cannot reconstruct hidden pixels.")
+st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run on the app server without Gemini API calls. Front-facing pose conversion requires a separately running ComfyUI-compatible endpoint and an identity-aware workflow; no model weights are downloaded by this app. AI can change facial identity, and segmentation cannot reconstruct hidden pixels.")
