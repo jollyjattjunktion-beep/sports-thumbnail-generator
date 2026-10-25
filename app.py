@@ -2370,7 +2370,7 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     if ordinal_match:
         ordinal_text = ordinal_match.group(1)
         format_text = ordinal_match.group(2).upper()
-        badge_w = int(w * 0.435)
+        badge_w = int(w * 0.365)
         left_panel_w = int(badge_w * 0.43)
     else:
         ordinal_text = ""
@@ -2416,7 +2416,7 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     talk_font = _center_font_fitted(draw, talk_text, 158, int(w * 0.43) - 70, 58)
     talk_box = draw.textbbox((0, 0), talk_text, font=talk_font)
     talk_tw, talk_th = talk_box[2] - talk_box[0], talk_box[3] - talk_box[1]
-    talk_w = min(int(w * 0.44), talk_tw + 100)
+    talk_w = min(int(w * 0.44), max(int(w * 0.37), talk_tw + 100))
     talk_h = int(h * 0.145)
     talk_x = (w - talk_w) // 2
     talk_y = int(h * 0.595)
