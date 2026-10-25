@@ -295,8 +295,16 @@ class _CanvaMCPClient:
         return _canva_unpack_tool_result(envelope)
 
 
-def _canva_mcp_edit_player(upload_bytes, prompt):
-    """Upload a reference photo to Canva MCP, run one image edit, and retrieve its preview."""
+def _canva_mcp_edit_player(
+    upload_bytes,
+    prompt,
+    *,
+    aspect_ratio="PORTRAIT_4_5",
+    max_edge=1400,
+    user_intent="Edit the supplied cricket-player photo to a front-facing pose for the user's cricket thumbnail.",
+    remove_magenta=True,
+):
+    """Upload a reference image to Canva MCP, run one image edit, and retrieve its preview."""
     token, token_error = _canva_valid_access_token()
     if not token:
         return None, token_error
@@ -308,8 +316,8 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
         with Image.open(io.BytesIO(upload_bytes)) as opened:
             opened.load()
             source = opened.convert("RGBA")
-            if max(source.size) > 1400:
-                scale = 1400.0 / max(source.size)
+            if max(source.size) > max_edge:
+                scale = float(max_edge) / max(source.size)
                 source = source.resize(
                     (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
                     Image.Resampling.LANCZOS,
@@ -346,8 +354,8 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
             {
                 "prompt": prompt,
                 "imageReferences": [{"type": "MEDIA", "id": str(media_id)}],
-                "aspectRatio": "PORTRAIT_4_5",
-                "user_intent": "Edit the supplied cricket-player photo to a front-facing pose for the user's cricket thumbnail.",
+                "aspectRatio": aspect_ratio,
+                "user_intent": str(user_intent)[:255],
             },
         )
         job_id = job_result.get("jobId") or job_result.get("job_id")
@@ -440,11 +448,12 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
                 f"Canva returned an asset preview at {w} × {h} px, not a verified full-resolution original. "
                 "The thumbnail canvas still exports at 3840 × 2160, but this portrait may look softer when enlarged."
             )
-        try:
-            output_image = _remove_magenta_chroma_background(output_image)
-        except ValueError as exc:
-            if output_image.getchannel("A").getextrema()[0] >= 250:
-                raise RuntimeError(str(exc)) from exc
+        if remove_magenta:
+            try:
+                output_image = _remove_magenta_chroma_background(output_image)
+            except ValueError as exc:
+                if output_image.getchannel("A").getextrema()[0] >= 250:
+                    raise RuntimeError(str(exc)) from exc
         return output_image, None
     except Exception as exc:
         # Identify the failing stage so a generic upstream HTTP 500 can be separated
@@ -3276,6 +3285,72 @@ with col_right:
         mime="image/png",
         use_container_width=True,
     )
+
+    st.markdown("**Optional: ask Canva AI to front-face BOTH players in the finished thumbnail**")
+    st.caption(
+        "This sends the full thumbnail as one reference image and asks Canva to change only both player poses. "
+        "AI may still redraw lettering, flags, jerseys, faces, or other details. The original 4K render is kept unchanged; "
+        "the Canva result appears as a separate candidate for review."
+    )
+    canva_full_pose_clicked = st.button(
+        "🎨 Ask Canva AI to front-face BOTH players",
+        key="canva_frontface_both_players_in_thumbnail",
+        use_container_width=True,
+    )
+    if canva_full_pose_clicked:
+        if not str(st.session_state.get("canva_access_token", "") or "").strip():
+            st.warning("Connect Canva in Section 8 before using full-thumbnail pose editing.")
+        else:
+            full_thumb_prompt = (
+                "EDIT THE PROVIDED EXISTING 16:9 CRICKET YOUTUBE THUMBNAIL. Make a localized pose edit only. "
+                "Change BOTH visible cricket players, the left player and the right player, from side-facing or three-quarter "
+                "poses to direct front-facing poses, looking straight at the camera with both eyes visible and shoulders "
+                "nearly square. Preserve each same person's identity as closely as possible: face shape, age, skin tone, "
+                "hair and facial hair, expression, body build, and their exact team jersey colors, patterns, sponsors and logos. "
+                "Keep both players in their same left/right positions and at the same approximate scale and crop. "
+                "LOCK EVERYTHING ELSE: do not change the PREET SPORTS logo, any words or typography, LIVE, T20, HINDI COMMENTARY, "
+                "ENG or PAK labels, flags, stadium, lighting, colors, borders, diagonal panels, shadows, spacing, or composition. "
+                "Do not invent, remove, translate, redraw, or move text or logos. Do not add objects or people. "
+                "Keep the original 16:9 layout and all design elements in their exact positions. Only adjust the two players' poses."
+            )
+            with st.spinner("Sending the complete thumbnail to Canva AI. One generation job may use Canva AI allowance…"):
+                edited_thumb, edit_error = _canva_mcp_edit_player(
+                    output_png,
+                    full_thumb_prompt,
+                    aspect_ratio="LANDSCAPE_16_9",
+                    max_edge=2000,
+                    user_intent="Edit this finished cricket thumbnail by changing only both player poses to face the camera.",
+                    remove_magenta=False,
+                )
+            if edited_thumb is not None:
+                st.session_state["canva_full_thumbnail_pose_candidate"] = edited_thumb.convert("RGB")
+                st.session_state["canva_full_thumbnail_pose_signature"] = render_signature
+                st.success("Canva returned a full-thumbnail pose-edit candidate. Review it carefully before using it.")
+            else:
+                st.error(edit_error)
+
+    if (
+        st.session_state.get("canva_full_thumbnail_pose_candidate") is not None
+        and st.session_state.get("canva_full_thumbnail_pose_signature") == render_signature
+    ):
+        candidate = st.session_state["canva_full_thumbnail_pose_candidate"]
+        st.markdown("**Canva AI full-thumbnail candidate — review before use**")
+        st.image(candidate.resize((1280, 720), Image.Resampling.LANCZOS), use_container_width=True)
+        st.warning(
+            f"Returned image size: {candidate.width} × {candidate.height} px. This is an AI-edited candidate, not a guaranteed lossless 4K original. "
+            "Text, logos, flags, jersey details and faces may differ from the original. The main thumbnail remains unchanged."
+        )
+        candidate_buffer = io.BytesIO()
+        candidate_4k = candidate.resize((3840, 2160), Image.Resampling.LANCZOS)
+        candidate_4k.save(candidate_buffer, format="PNG", optimize=False, compress_level=1)
+        st.download_button(
+            label="⬇️ Download Canva AI candidate resized to 4K",
+            data=candidate_buffer.getvalue(),
+            file_name=f"{normalize_team_name(team1).replace(' ', '_')}_vs_{normalize_team_name(team2).replace(' ', '_')}_Canva_AI_pose_candidate_4K.png",
+            mime="image/png",
+            use_container_width=True,
+            key="download_canva_full_thumbnail_pose_candidate",
+        )
 
 st.divider()
 st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run on the app server. One-click front-facing conversion uses Canva when connected, or the hosted Replicate Qwen Image Edit Plus API when REPLICATE_API_TOKEN is configured. Hosted inference may be billed per output image. AI can alter facial identity, and hidden pixels cannot be recovered exactly.")
