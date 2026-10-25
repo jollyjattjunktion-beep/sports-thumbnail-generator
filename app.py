@@ -2621,11 +2621,11 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 
     # Red MATCH TALK strip directly below the split format badge.
     talk_text = str(commentary_text or "MATCH TALK").strip().upper()
-    talk_font = _center_font_fitted(draw, talk_text, 148, int(w * 0.36) - 70, 52)
+    talk_font = _center_font_fitted(draw, talk_text, 168, int(w * 0.39) - 70, 52)
     talk_box = draw.textbbox((0, 0), talk_text, font=talk_font)
     talk_tw, talk_th = talk_box[2] - talk_box[0], talk_box[3] - talk_box[1]
-    talk_w = min(int(w * 0.38), max(int(w * 0.33), talk_tw + 100))
-    talk_h = int(h * 0.105)
+    talk_w = min(int(w * 0.39), max(int(w * 0.36), talk_tw + 100))
+    talk_h = int(h * 0.115)
     talk_x = (w - talk_w) // 2
     talk_y = int(h * 0.595)
     draw.rectangle((talk_x - 12, talk_y - 12, talk_x + talk_w + 12, talk_y + talk_h + 12),
@@ -2639,7 +2639,7 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 
     # Black bottom plates with yellow outlines; arrows point inward from both sides.
     team_y = int(h * 0.745)
-    team_w = int(w * 0.32)
+    team_w = int(w * 0.405)
     team_h = int(h * 0.17)
     draw_match_talk_arrow(draw, 0, team_y, team_w, team_h, high_ctr_team_label(t1_name), "left")
     draw_match_talk_arrow(draw, w - team_w, team_y, team_w, team_h, high_ctr_team_label(t2_name), "right")
@@ -2671,6 +2671,11 @@ col_left, col_right = st.columns([1, 1.2], gap="large")
 
 with col_left:
     st.subheader("1. Match & Captain Auto-Fetch")
+    # Seed the requested ICC match URL once for existing sessions whose old ESPN URL field was blank.
+    if not st.session_state.get("_match_url_default_initialized"):
+        if not str(st.session_state.get("match_page_url", "") or "").strip():
+            st.session_state["match_page_url"] = "https://www.icc-cricket.com/matches/274145/pakistan-vs-england"
+        st.session_state["_match_url_default_initialized"] = True
     match_url = st.text_input(
         "Paste ICC Match URL or ESPNcricinfo Match / Squad URL",
         value="https://www.icc-cricket.com/matches/274145/pakistan-vs-england",
