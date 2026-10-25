@@ -1368,7 +1368,7 @@ def remove_background_from_any_image(upload_bytes, filename="image", subject_ins
         )
 
 def convert_player_to_front_facing(upload_bytes, filename, side):
-    """Use Replicate Qwen Image Edit Plus when configured, otherwise use ComfyUI."""
+    """Use Canva MCP when connected, otherwise Replicate Qwen Image Edit Plus when configured."""
     side_label = "left" if side == "left" else "right"
     prompt = (
         "Edit the provided reference photo, do not create a different person. Turn this same real cricket player "
@@ -1454,132 +1454,10 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
         except Exception as exc:
             return None, f"Hosted image edit error: {exc}"
 
-    base_url = str(st.session_state.get("comfyui_url", os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188"))).strip().rstrip("/")
-    workflow_text = str(st.session_state.get("comfyui_workflow_json", os.environ.get("COMFYUI_API_WORKFLOW", ""))).strip()
-    image_node_id = str(st.session_state.get("comfyui_image_node_id", "")).strip()
-    image_input_name = str(st.session_state.get("comfyui_image_input_name", "image")).strip() or "image"
-    prompt_node_id = str(st.session_state.get("comfyui_prompt_node_id", "")).strip()
-    prompt_input_name = str(st.session_state.get("comfyui_prompt_input_name", "text")).strip() or "text"
-    # Optional auth for a privately hosted ComfyUI-compatible endpoint. Store the token
-    # in Render environment variables where possible; never commit it into app.py.
-    api_token = str(
-        st.session_state.get("comfyui_api_token", "")
-        or os.environ.get("COMFYUI_API_TOKEN", "")
-    ).strip()
-    request_headers = {"Authorization": f"Bearer {api_token}"} if api_token else {}
-    if not workflow_text:
-        return None, "Paste a ComfyUI API-format workflow in Section 8. In ComfyUI, use Save (API Format) / Export API workflow."
-    if not image_node_id or not prompt_node_id:
-        return None, "Enter the ComfyUI Load Image node ID and positive prompt node ID in Section 8."
-    try:
-        workflow = json.loads(workflow_text)
-        if not isinstance(workflow, dict):
-            raise ValueError("Workflow must be a JSON object.")
-        if image_node_id not in workflow or prompt_node_id not in workflow:
-            return None, "The configured node IDs were not found in the workflow JSON. Check the IDs in Section 8."
-        if not isinstance(workflow[image_node_id].get("inputs"), dict) or not isinstance(workflow[prompt_node_id].get("inputs"), dict):
-            return None, "The selected image/prompt nodes do not have an inputs object. Use a ComfyUI API-format workflow."
-        if image_input_name not in workflow[image_node_id]["inputs"]:
-            return None, f"Image input '{image_input_name}' is not present on node {image_node_id}."
-        if prompt_input_name not in workflow[prompt_node_id]["inputs"]:
-            return None, f"Prompt input '{prompt_input_name}' is not present on node {prompt_node_id}."
-    except Exception as exc:
-        return None, f"Could not read ComfyUI workflow JSON: {exc}"
-
-    side_label = "left" if side == "left" else "right"
-    prompt = (
-        "IDENTITY-PRESERVING PHOTO EDIT, not a new person and not a redesign. Use the uploaded image as the identity reference. "
-        "Keep the exact same real cricket player: preserve facial identity, face shape, eye spacing, nose, lips, jaw, skin tone, "
-        "hairline, hairstyle, age, expression, body build, jersey details, and any visible authentic logos. "
-        "Make the smallest plausible change needed to turn the head and upper torso toward the camera. "
-        "Front-facing head, eyes looking at camera, both eyes visible, shoulders nearly square; natural anatomy and realistic skin texture. "
-        "Keep original identity and uniform more important than pose perfection. Do not beautify, replace, average, or invent a face. "
-        "Do not add text, extra people, flags, logos, watermark, or props. "
-        "Frame from top of hair to mid-torso with generous margins around the hair, ears, and shoulders; do not crop the head or shoulders. "
-        "Use a flat pure magenta (#FF00FF) background edge-to-edge for local cutout; no gradient or cast shadow. "
-        f"Center the same player for the {side_label} side of a 16:9 cricket thumbnail."
+    return None, (
+        "Front-facing conversion requires Canva to be connected or REPLICATE_API_TOKEN to be configured. "
+        "The original portrait and 4K thumbnail workflow remain available without pose conversion."
     )
-    try:
-        with Image.open(io.BytesIO(upload_bytes)) as opened:
-            opened.load()
-            source = opened.convert("RGBA")
-            if max(source.size) > 1400:
-                scale = 1400 / float(max(source.size))
-                source = source.resize((max(1, int(source.width * scale)), max(1, int(source.height * scale))), Image.Resampling.LANCZOS)
-            buf = io.BytesIO()
-            if source.getchannel("A").getextrema()[0] < 250:
-                source.save(buf, format="PNG")
-                mime = "image/png"
-            else:
-                source.convert("RGB").save(buf, format="JPEG", quality=90)
-                mime = "image/jpeg"
-        uploaded = requests.post(
-            base_url + "/upload/image",
-            files={"image": (os.path.basename(filename or "player.png"), buf.getvalue(), mime)},
-            data={"overwrite": "true"},
-            headers=request_headers,
-            timeout=(10, 60),
-        )
-        uploaded.raise_for_status()
-        upload_info = uploaded.json()
-        image_name = upload_info.get("name")
-        if not image_name:
-            return None, "ComfyUI upload succeeded but did not return an image filename."
-        workflow[image_node_id]["inputs"][image_input_name] = image_name
-        workflow[prompt_node_id]["inputs"][prompt_input_name] = prompt
-        queued = requests.post(base_url + "/prompt", json={"prompt": workflow}, headers=request_headers, timeout=(10, 60))
-        if queued.status_code >= 400:
-            detail = queued.text[:1200]
-            return None, f"ComfyUI rejected the workflow (HTTP {queued.status_code}). Check required model/node setup. {detail}"
-        prompt_id = queued.json().get("prompt_id")
-        if not prompt_id:
-            return None, "ComfyUI did not return a prompt_id. Check the server console for workflow errors."
-        import time
-        deadline = time.time() + 300
-        output_image = None
-        while time.time() < deadline:
-            history_response = requests.get(base_url + "/history/" + prompt_id, headers=request_headers, timeout=(5, 20))
-            history_response.raise_for_status()
-            history = history_response.json().get(prompt_id, {})
-            outputs = history.get("outputs", {})
-            for node_output in outputs.values():
-                for item in node_output.get("images", []):
-                    view = requests.get(
-                        base_url + "/view",
-                        params={"filename": item.get("filename", ""), "subfolder": item.get("subfolder", ""), "type": item.get("type", "output")},
-                        headers=request_headers,
-                        timeout=(10, 60),
-                    )
-                    view.raise_for_status()
-                    output_image = Image.open(io.BytesIO(view.content)).convert("RGBA")
-                    break
-                if output_image is not None:
-                    break
-            if output_image is not None:
-                break
-            status = history.get("status", {})
-            if status.get("completed") and not outputs:
-                return None, "ComfyUI finished without an image output. Ensure the workflow contains a Save Image node."
-            time.sleep(1)
-        if output_image is None:
-            return None, "Timed out waiting for ComfyUI (5 minutes). Check the ComfyUI queue and model performance."
-        try:
-            output_image = _remove_magenta_chroma_background(output_image)
-        except ValueError as exc:
-            # Some workflows can return true alpha; accept that rather than forcing a chroma key.
-            if output_image.getchannel("A").getextrema()[0] < 250:
-                pass
-            else:
-                return None, str(exc)
-        return output_image, None
-    except requests.ConnectionError:
-        return None, f"Cannot reach ComfyUI at {base_url}. Start ComfyUI first and verify its port (normally 8188)."
-    except requests.Timeout:
-        return None, "ComfyUI request timed out. Check that the local model is loaded and the server is responsive."
-    except requests.RequestException as exc:
-        return None, f"ComfyUI API request failed: {exc}"
-    except Exception as exc:
-        return None, f"ComfyUI front-facing conversion failed: {exc}"
 
 @st.cache_data(show_spinner=False, ttl=86400, max_entries=64)
 def resolve_player_image_url(player_url):
@@ -2987,11 +2865,10 @@ with col_left:
         key="stadium_background_url",
     )
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
-    st.subheader("8. AI Front-Facing Pose Conversion — Canva / Replicate / ComfyUI")
+    st.subheader("8. AI Front-Facing Pose Conversion — Canva / Replicate")
     st.info(
-        "Open-source ComfyUI workflow integration; no Gemini or paid AI API is called by this app. The prompt prioritizes keeping "
-        "the same player's identity while changing pose, but diffusion models can still alter facial details. Use an identity-aware "
-        "workflow (for example, InstantID/IPAdapter FaceID where licensing and model requirements permit), low denoise, and inspect results."
+        "Canva or Replicate can edit the reference player photo to a front-facing pose. The model may still alter facial details, "
+        "so inspect the result before exporting."
     )
     st.markdown("**Canva AI reference-photo editing**")
     st.caption(
@@ -3035,48 +2912,6 @@ with col_left:
         st.error(str(st.session_state["canva_oauth_error"]))
     if st.session_state.get("canva_pose_quality_note"):
         st.warning(str(st.session_state["canva_pose_quality_note"]))
-    st.warning(
-        "Render limitation: this app does not include a hosted AI model and Render's standard web service is not a free GPU. "
-        "A Render deployment cannot reach your PC at 127.0.0.1. You must provide a running ComfyUI-compatible endpoint reachable "
-        "from Render (self-hosted compute or a free service if available). Free GPU availability is not guaranteed, CPU generation "
-        "may be extremely slow, and no public endpoint should be exposed without access controls. If no endpoint is configured, "
-        "the original portrait and existing 4K thumbnail workflow continue to work."
-    )
-    comfy_col1, comfy_col2 = st.columns(2)
-    with comfy_col1:
-        st.text_input("ComfyUI server URL", value=os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188"), key="comfyui_url")
-        st.text_input(
-            "ComfyUI API bearer token (optional)",
-            value=os.environ.get("COMFYUI_API_TOKEN", ""),
-            type="password",
-            key="comfyui_api_token",
-            help="Prefer setting COMFYUI_API_TOKEN in Render Environment. Only works if your ComfyUI-compatible endpoint supports Bearer authentication.",
-        )
-        st.text_input("Load Image node ID", value=os.environ.get("COMFYUI_IMAGE_NODE_ID", ""), key="comfyui_image_node_id")
-        st.text_input("Image input name", value=os.environ.get("COMFYUI_IMAGE_INPUT_NAME", "image"), key="comfyui_image_input_name")
-    with comfy_col2:
-        st.text_input("Positive prompt node ID", value=os.environ.get("COMFYUI_PROMPT_NODE_ID", ""), key="comfyui_prompt_node_id")
-        st.text_input("Prompt input name", value=os.environ.get("COMFYUI_PROMPT_INPUT_NAME", "text"), key="comfyui_prompt_input_name")
-        if st.button("Test ComfyUI connection", key="test_comfyui_connection"):
-            try:
-                token = str(st.session_state.get("comfyui_api_token", "") or os.environ.get("COMFYUI_API_TOKEN", "")).strip()
-                headers = {"Authorization": f"Bearer {token}"} if token else {}
-                check = requests.get(
-                    st.session_state.get("comfyui_url", "http://127.0.0.1:8188").rstrip("/") + "/system_stats",
-                    headers=headers,
-                    timeout=5,
-                )
-                check.raise_for_status()
-                st.success("ComfyUI is reachable.")
-            except Exception as exc:
-                st.error(f"Cannot reach ComfyUI: {exc}")
-    st.session_state["comfyui_workflow_json"] = st.text_area(
-        "ComfyUI API workflow JSON",
-        value=os.environ.get("COMFYUI_API_WORKFLOW", ""),
-        height=180,
-        key="comfyui_workflow_json_input",
-        help="Paste the API-format JSON exported from ComfyUI. The configured Load Image and positive prompt nodes are replaced at run time."
-    )
     col_up1, col_up2 = st.columns(2)
     with col_up1:
         custom_p1 = st.file_uploader(
@@ -3252,7 +3087,7 @@ def _pose_source_hash(image):
 st.markdown("**Front-face the current thumbnail portraits**")
 st.caption(
     "Priority: connected Canva MCP reference-photo editing (uses Canva AI allowance, one generation job per click); otherwise Replicate if configured; "
-    "otherwise the existing ComfyUI workflow. Canva MCP's documented result is a media reference, and the current public asset endpoint may return only a preview thumbnail, "
+    "otherwise the original portrait is retained. Canva MCP's documented result is a media reference, and the current public asset endpoint may return only a preview thumbnail, "
     "so inspect the output quality before using it for a 4K thumbnail. The original portrait is retained if conversion fails."
 )
 pose_left_col, pose_right_col = st.columns(2)
@@ -3414,4 +3249,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run on the app server. One-click front-facing conversion supports the hosted Replicate Qwen Image Edit Plus API when REPLICATE_API_TOKEN is configured; otherwise it uses the optional ComfyUI workflow. Hosted inference is billed per output image. AI can alter facial identity, and hidden pixels cannot be recovered exactly.")
+st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run on the app server. One-click front-facing conversion uses Canva when connected, or the hosted Replicate Qwen Image Edit Plus API when REPLICATE_API_TOKEN is configured. Hosted inference may be billed per output image. AI can alter facial identity, and hidden pixels cannot be recovered exactly.")
