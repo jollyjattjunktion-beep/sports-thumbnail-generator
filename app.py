@@ -468,7 +468,7 @@ _canva_process_oauth_callback()
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v30-match-talk-style"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v31-reference-match-talk"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -2224,8 +2224,8 @@ def render_match_talk_player(canvas, player_img, side):
     if player_img is None:
         return
     player = get_image_alpha_content(apply_sports_color_grade(player_img)).convert("RGBA")
-    max_w = int(CANVAS_WIDTH * 0.415)
-    max_h = int(CANVAS_HEIGHT * 0.98)
+    max_w = int(CANVAS_WIDTH * 0.365)
+    max_h = int(CANVAS_HEIGHT * 0.995)
     scale = min(max_w / max(1, player.width), max_h / max(1, player.height))
     new_w = max(1, int(round(player.width * scale)))
     new_h = max(1, int(round(player.height * scale)))
@@ -2242,31 +2242,27 @@ def render_match_talk_player(canvas, player_img, side):
 
 
 def draw_match_talk_arrow(draw, x, y, width, height, label, side):
-    """Compact black team-code banner with yellow/white edge and inward-pointing notch."""
+    """Reference-matched black arrow plate with a single yellow edge and white team code."""
     if side == "left":
         points = [(x, y), (x + width - height // 2, y), (x + width, y + height // 2),
                   (x + width - height // 2, y + height), (x, y + height)]
     else:
         points = [(x + height // 2, y), (x + width, y), (x + width, y + height),
                   (x + height // 2, y + height), (x, y + height // 2)]
-    closed = points + [points[0]]
     draw.polygon(points, fill=(0, 0, 0, 255))
-    draw.line(closed, fill=(255, 205, 20, 255), width=18, joint="curve")
-    draw.line(closed, fill=(255, 255, 255, 255), width=6, joint="curve")
-    label_font = load_robust_font(225)
-    max_w = int(width * 0.64)
+    draw.line(points + [points[0]], fill=(255, 205, 0, 255), width=22, joint="curve")
+    label_font = load_robust_font(238)
+    max_w = int(width * 0.62)
     while label_font.size > 82:
         box = draw.textbbox((0, 0), label, font=label_font)
         if box[2] - box[0] <= max_w:
             break
         label_font = load_robust_font(label_font.size - 8)
-    box = draw.textbbox((0, 0), label, font=label_font, stroke_width=2)
+    box = draw.textbbox((0, 0), label, font=label_font)
     tw, th = box[2] - box[0], box[3] - box[1]
     tx = x + (width - tw) // 2
     ty = y + (height - th) // 2 - box[1]
-    draw.text((tx, ty), label, font=label_font, fill=(255, 255, 255, 255),
-              stroke_width=2, stroke_fill=(0, 0, 0, 255))
-
+    draw.text((tx, ty), label, font=label_font, fill=(255, 255, 255, 255))
 
 def _center_font_fitted(draw, text, start_size, max_width, min_size=58):
     font = load_robust_font(start_size)
@@ -2280,110 +2276,165 @@ def _center_font_fitted(draw, text, start_size, max_width, min_size=58):
 
 def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
                                   t1_name, t2_name, t1_flag, t2_flag, commentary_text="MATCH TALK"):
-    """High-contrast PREET SPORTS layout inspired by compact live-cricket thumbnails."""
+    """Reproduce the supplied reference layout with PREET SPORTS branding and dynamic match text."""
+    w, h = CANVAS_WIDTH, CANVAS_HEIGHT
     if bg_img is None:
         bg_img = fetch_default_stadium_background()
     if bg_img is not None:
-        canvas = resize_cover(bg_img, CANVAS_WIDTH, CANVAS_HEIGHT)
-        canvas = canvas.filter(ImageFilter.GaussianBlur(0.55))
-        canvas = ImageEnhance.Brightness(canvas).enhance(1.06)
-        canvas = ImageEnhance.Color(canvas).enhance(1.20)
-        canvas = ImageEnhance.Contrast(canvas).enhance(1.09)
-        canvas = ImageEnhance.Sharpness(canvas).enhance(1.22)
+        canvas = resize_cover(bg_img, w, h)
+        canvas = canvas.filter(ImageFilter.GaussianBlur(0.45))
+        canvas = ImageEnhance.Brightness(canvas).enhance(1.12)
+        canvas = ImageEnhance.Color(canvas).enhance(1.22)
+        canvas = ImageEnhance.Contrast(canvas).enhance(1.08)
+        canvas = ImageEnhance.Sharpness(canvas).enhance(1.20)
     else:
         canvas = generate_procedural_stadium()
 
-    # Bright blue upper field and subtle green lower pitch tint: keep the stadium recognizable.
-    tint = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
-    td = ImageDraw.Draw(tint)
-    blue_end = int(CANVAS_HEIGHT * 0.61)
-    for y in range(0, blue_end, 10):
-        alpha = int(36 * (1 - y / max(1, blue_end)))
-        td.line((0, y, CANVAS_WIDTH, y), fill=(18, 112, 242, alpha), width=10)
-    td.rectangle((0, int(CANVAS_HEIGHT * 0.68), CANVAS_WIDTH, CANVAS_HEIGHT),
-                 fill=(0, 78, 22, 19))
-    canvas = Image.alpha_composite(canvas, tint)
+    # Bright blue sky over the real stadium photo and a subtle green lower field.
+    bg_tint = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    tint_draw = ImageDraw.Draw(bg_tint)
+    blue_end = int(h * 0.62)
+    for y in range(0, blue_end, 8):
+        progress = y / max(1, blue_end)
+        alpha = int(100 * (1 - progress) + 12)
+        tint_draw.line((0, y, w, y), fill=(0, 105, 245, alpha), width=8)
+    green_start = int(h * 0.76)
+    for y in range(green_start, h, 8):
+        progress = (y - green_start) / max(1, h - green_start)
+        alpha = int(14 + 24 * progress)
+        tint_draw.line((0, y, w, y), fill=(0, 90, 18, alpha), width=8)
+    canvas = Image.alpha_composite(canvas, bg_tint)
 
-    # Team-tinted side wedges frame the players but leave the centre clean for the LIVE stack.
-    left_main, left_accent, left_dark = team_palette(t1_name)
-    right_main, right_accent, right_dark = team_palette(t2_name)
-    panels = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
-    pd = ImageDraw.Draw(panels)
-    w, h = CANVAS_WIDTH, CANVAS_HEIGHT
-    pd.polygon([(0, 0), (int(w * 0.26), 0), (int(w * 0.37), h), (0, h)],
-               fill=(*left_main, 45))
-    pd.polygon([(w, 0), (int(w * 0.74), 0), (int(w * 0.63), h), (w, h)],
-               fill=(*right_main, 45))
-    pd.polygon([(int(w * 0.22), 0), (int(w * 0.245), 0), (int(w * 0.34), h),
-                (int(w * 0.315), h)], fill=(*left_accent, 70))
-    pd.polygon([(int(w * 0.78), 0), (int(w * 0.755), 0), (int(w * 0.66), h),
-                (int(w * 0.685), h)], fill=(*right_accent, 70))
-    canvas = Image.alpha_composite(canvas, panels)
+    # Only the blue outer side panels and the diagonal slashes visible in the reference.
+    panel_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(panel_layer)
+    pd.polygon([(0, 0), (int(w * 0.205), 0), (int(w * 0.115), int(h * 0.84)), (0, int(h * 0.84))],
+               fill=(8, 38, 205, 190))
+    pd.polygon([(w, 0), (int(w * 0.805), 0), (int(w * 0.895), int(h * 0.84)), (w, int(h * 0.84))],
+               fill=(7, 35, 173, 150))
+    pd.polygon([(int(w * 0.205), 0), (int(w * 0.222), 0),
+                (int(w * 0.132), int(h * 0.84)), (int(w * 0.115), int(h * 0.84))],
+               fill=(255, 202, 0, 255))
+    pd.polygon([(int(w * 0.790), 0), (int(w * 0.803), 0),
+                (int(w * 0.713), int(h * 0.84)), (int(w * 0.700), int(h * 0.84))],
+               fill=(245, 250, 255, 235))
+    canvas = Image.alpha_composite(canvas, panel_layer)
 
+    # The reference places circular team flags behind each player's head.
+    left_main, left_accent, _ = team_palette(t1_name)
+    right_main, right_accent, _ = team_palette(t2_name)
+    emblem_size = 1040
+    draw_team_flag_watermark(canvas, t1_flag, 0, 42, emblem_size, left_main, left_accent, opacity=238)
+    draw_team_flag_watermark(canvas, t2_flag, w - emblem_size, 42, emblem_size, right_main, right_accent, opacity=238)
+
+    # Large left/right player cutouts, placed behind the central text and bottom team plates.
     render_match_talk_player(canvas, p1_img, "left")
     render_match_talk_player(canvas, p2_img, "right")
 
-    overlay = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    draw_brand_pill(draw, channel_text)
 
-    # Large red LIVE with outer dark outline and inner white keyline for small-screen readability.
+    # Small, rectangular top-centre brand plate; keep PREET SPORTS identity.
+    brand_text = str(channel_text or "PREET SPORTS").strip().upper()
+    brand_font = _center_font_fitted(draw, brand_text, 96, int(w * 0.31), 48)
+    brand_box = draw.textbbox((0, 0), brand_text, font=brand_font)
+    brand_tw, brand_th = brand_box[2] - brand_box[0], brand_box[3] - brand_box[1]
+    brand_w = max(int(w * 0.265), brand_tw + 108)
+    brand_h = max(142, brand_th + 44)
+    brand_x = (w - brand_w) // 2
+    brand_y = 28
+    draw.rectangle((brand_x - 8, brand_y - 8, brand_x + brand_w + 8, brand_y + brand_h + 8),
+                   fill=(5, 18, 38, 255), outline=(255, 208, 0, 255), width=10)
+    draw.rectangle((brand_x, brand_y, brand_x + brand_w, brand_y + brand_h), fill=(9, 58, 151, 255))
+    draw.rectangle((brand_x, brand_y, brand_x + brand_w, brand_y + 12), fill=(235, 20, 28, 255))
+    brand_tx = (w - brand_tw) // 2
+    brand_ty = brand_y + (brand_h - brand_th) // 2 - brand_box[1]
+    draw.text((brand_tx, brand_ty), brand_text, font=brand_font, fill=(255, 255, 255, 255),
+              stroke_width=2, stroke_fill=(0, 0, 0, 255))
+
+    # Huge red LIVE headline with black depth and keyline, centered in the open sky.
     live_text = str(match_status or "LIVE").strip().upper()
-    live_font = _center_font_fitted(draw, live_text, 500, int(w * 0.53), 76)
-    live_y = 405
-    live_box = draw.textbbox((0, 0), live_text, font=live_font)
-    live_h = live_box[3] - live_box[1]
-    draw_centered_text(
-        draw, w, live_text, live_y + 8, live_font, (8, 10, 18, 255),
-        stroke_width=44, stroke_fill=(8, 10, 18, 255)
-    )
-    draw_centered_text(
-        draw, w, live_text, live_y, live_font, (232, 15, 23, 255),
-        stroke_width=25, stroke_fill=(255, 255, 255, 255)
-    )
-    draw_centered_text(draw, w, live_text, live_y, live_font, (232, 15, 23, 255))
+    live_font = _center_font_fitted(draw, live_text, 520, int(w * 0.43), 72)
+    live_y = int(h * 0.205)
+    draw_centered_text(draw, w, live_text, live_y + 18, live_font, (4, 6, 12, 255),
+                       stroke_width=38, stroke_fill=(4, 6, 12, 255))
+    draw_centered_text(draw, w, live_text, live_y, live_font, (230, 8, 19, 255),
+                       stroke_width=20, stroke_fill=(6, 6, 6, 255))
 
-    # Yellow format strip supports formats such as T20, 2ND T20, or 1ST ODI.
-    badge_text = str(match_badge or "T20").strip().upper()
-    badge_font = _center_font_fitted(draw, badge_text, 144, int(w * 0.39), 60)
-    badge_box = draw.textbbox((0, 0), badge_text, font=badge_font)
-    badge_tw, badge_th = badge_box[2] - badge_box[0], badge_box[3] - badge_box[1]
-    badge_w = min(int(w * 0.48), badge_tw + 132)
-    badge_h = max(150, badge_th + 54)
+    # Rectangular split badge: white ordinal at left, black panel with yellow format at right.
+    badge_text = str(match_badge or "T20").strip()
+    ordinal_match = re.match(
+        r"^\s*((?:\d+(?:st|nd|rd|th)|FINAL|QUALIFIER|ELIMINATOR))\s+(.+?)\s*$",
+        badge_text, flags=re.IGNORECASE
+    )
+    if ordinal_match:
+        ordinal_text = ordinal_match.group(1)
+        format_text = ordinal_match.group(2).upper()
+        badge_w = int(w * 0.435)
+        left_panel_w = int(badge_w * 0.43)
+    else:
+        ordinal_text = ""
+        format_text = badge_text.upper()
+        badge_w = int(w * 0.34)
+        left_panel_w = 0
+    badge_h = int(h * 0.155)
     badge_x = (w - badge_w) // 2
-    badge_y = live_y + live_h + 48
-    draw.rounded_rectangle((badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
-                           radius=25, fill=(255, 218, 20, 255),
-                           outline=(5, 10, 20, 255), width=16)
-    draw.rounded_rectangle((badge_x + 8, badge_y + 8, badge_x + badge_w - 8, badge_y + badge_h - 8),
-                           radius=20, outline=(255, 255, 255, 255), width=5)
-    badge_tx = (w - badge_tw) // 2
-    badge_ty = badge_y + (badge_h - badge_th) // 2 - badge_box[1]
-    draw.text((badge_tx, badge_ty), badge_text, font=badge_font, fill=(8, 15, 24, 255))
+    badge_y = int(h * 0.435)
+    draw.rectangle((badge_x - 14, badge_y - 14, badge_x + badge_w + 14, badge_y + badge_h + 14),
+                   fill=(3, 7, 15, 255))
+    draw.rectangle((badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
+                   fill=(0, 0, 0, 255), outline=(255, 203, 0, 255), width=20)
+    if ordinal_text:
+        draw.rectangle((badge_x + 10, badge_y + 10, badge_x + left_panel_w, badge_y + badge_h - 10),
+                       fill=(250, 250, 250, 255))
+        draw.rectangle((badge_x + left_panel_w, badge_y + 10, badge_x + badge_w - 10, badge_y + badge_h - 10),
+                       fill=(0, 0, 0, 255))
+        draw.line((badge_x + left_panel_w, badge_y + 12, badge_x + left_panel_w, badge_y + badge_h - 12),
+                  fill=(255, 203, 0, 255), width=10)
+    if ordinal_text:
+        ordinal_font = _center_font_fitted(draw, ordinal_text, 240, left_panel_w - 50, 72)
+        ob = draw.textbbox((0, 0), ordinal_text, font=ordinal_font)
+        ow, oh = ob[2] - ob[0], ob[3] - ob[1]
+        ox = badge_x + (left_panel_w - ow) // 2
+        oy = badge_y + (badge_h - oh) // 2 - ob[1]
+        draw.text((ox, oy), ordinal_text, font=ordinal_font, fill=(0, 0, 0, 255))
+        format_area_x = badge_x + left_panel_w
+        format_area_w = badge_w - left_panel_w
+    else:
+        format_area_x = badge_x
+        format_area_w = badge_w
+    format_font = _center_font_fitted(draw, format_text, 260, format_area_w - 44, 70)
+    fb = draw.textbbox((0, 0), format_text, font=format_font)
+    fw, fh = fb[2] - fb[0], fb[3] - fb[1]
+    fx = format_area_x + (format_area_w - fw) // 2
+    fy = badge_y + (badge_h - fh) // 2 - fb[1]
+    draw.text((fx, fy), format_text, font=format_font, fill=(255, 221, 0, 255),
+              stroke_width=2, stroke_fill=(15, 15, 15, 255))
 
+    # Red MATCH TALK strip directly below the split format badge.
     talk_text = str(commentary_text or "MATCH TALK").strip().upper()
-    if talk_text:
-        talk_font = _center_font_fitted(draw, talk_text, 94, int(w * 0.42), 52)
-        talk_box = draw.textbbox((0, 0), talk_text, font=talk_font)
-        talk_tw, talk_th = talk_box[2] - talk_box[0], talk_box[3] - talk_box[1]
-        talk_w = min(int(w * 0.51), talk_tw + 104)
-        talk_h = max(112, talk_th + 42)
-        talk_x = (w - talk_w) // 2
-        talk_y = badge_y + badge_h + 18
-        draw.rounded_rectangle((talk_x, talk_y, talk_x + talk_w, talk_y + talk_h),
-                               radius=18, fill=(5, 18, 38, 255),
-                               outline=(255, 205, 20, 255), width=14)
-        talk_tx = (w - talk_tw) // 2
-        talk_ty = talk_y + (talk_h - talk_th) // 2 - talk_box[1]
-        draw.text((talk_tx, talk_ty), talk_text, font=talk_font, fill=(255, 255, 255, 255),
-                  stroke_width=2, stroke_fill=(0, 0, 0, 255))
+    talk_font = _center_font_fitted(draw, talk_text, 158, int(w * 0.43) - 70, 58)
+    talk_box = draw.textbbox((0, 0), talk_text, font=talk_font)
+    talk_tw, talk_th = talk_box[2] - talk_box[0], talk_box[3] - talk_box[1]
+    talk_w = min(int(w * 0.44), talk_tw + 100)
+    talk_h = int(h * 0.145)
+    talk_x = (w - talk_w) // 2
+    talk_y = int(h * 0.595)
+    draw.rectangle((talk_x - 12, talk_y - 12, talk_x + talk_w + 12, talk_y + talk_h + 12),
+                   fill=(4, 8, 15, 255))
+    draw.rectangle((talk_x, talk_y, talk_x + talk_w, talk_y + talk_h),
+                   fill=(233, 13, 24, 255), outline=(255, 210, 0, 255), width=22)
+    talk_tx = (w - talk_tw) // 2
+    talk_ty = talk_y + (talk_h - talk_th) // 2 - talk_box[1]
+    draw.text((talk_tx, talk_ty), talk_text, font=talk_font, fill=(255, 255, 255, 255),
+              stroke_width=2, stroke_fill=(20, 12, 12, 255))
 
-    # Minimal bottom arrows carry short team identifiers; no circular flags compete with faces.
-    team_y = CANVAS_HEIGHT - 355
-    team_w, team_h = 1220, 300
+    # Black bottom plates with yellow outlines; arrows point inward from both sides.
+    team_y = int(h * 0.805)
+    team_w = int(w * 0.405)
+    team_h = int(h * 0.17)
     draw_match_talk_arrow(draw, 0, team_y, team_w, team_h, high_ctr_team_label(t1_name), "left")
-    draw_match_talk_arrow(draw, CANVAS_WIDTH - team_w, team_y, team_w, team_h,
-                          high_ctr_team_label(t2_name), "right")
+    draw_match_talk_arrow(draw, w - team_w, team_y, team_w, team_h, high_ctr_team_label(t2_name), "right")
 
     return Image.alpha_composite(canvas, overlay)
 
@@ -2392,7 +2443,7 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 # STREAMLIT UI
 # =========================================================
 st.title("🏏 PREET SPORTS — 4K Cricket Thumbnail Studio")
-st.caption("Two selectable 4K layouts: PREET SPORTS Match Talk (high contrast, inspired by compact live-cricket thumbnails) and the original Classic layout. 3840 × 2160 PNG export.")
+st.caption("PREET SPORTS thumbnail layout matched to your supplied reference image: bright stadium, circular team emblems, two large player cutouts, red LIVE headline, split format badge, red MATCH TALK strip and black/yellow team arrows. 3840 × 2160 PNG export.")
 
 for key in [
     "p1_cutout", "p2_cutout", "p1_ai_front", "p2_ai_front",
@@ -2577,16 +2628,8 @@ with col_left:
         help="Swaps only the player images. Team names, flags and team panels remain in their left/right positions.",
     )
 
-    design_style = st.selectbox(
-        "Thumbnail Design Style",
-        options=[
-            "PREET SPORTS — Match Talk (High Contrast)",
-            "PREET SPORTS — Classic",
-        ],
-        index=0,
-        key="thumbnail_design_style_v1",
-        help="Match Talk uses a brighter stadium, large red LIVE, a yellow match-format strip, a dark talk strip, and compact team-code banners. Classic preserves the earlier design.",
-    )
+    # Locked to the supplied reference layout; no extra style variants.
+    design_style = "PREET SPORTS — Match Talk (High Contrast)"
 
     col_status, col_badge = st.columns(2)
     with col_status:
@@ -2594,21 +2637,14 @@ with col_left:
     with col_badge:
         match_badge = st.text_input(
             "Match Format / Number Badge (e.g. 2nd T20, 1st ODI)",
-            value="T20",
+            value="2nd T20",
             key="match_badge_input",
         )
-    if design_style == "PREET SPORTS — Match Talk (High Contrast)":
-        commentary_text = st.text_input(
-            "Box below the format badge",
-            value="MATCH TALK",
-            key="commentary_text_matchtalk_input",
-        )
-    else:
-        commentary_text = st.text_input(
-            "Box below T20 badge",
-            value="HINDI COMMENTARY",
-            key="commentary_text_input",
-        )
+    commentary_text = st.text_input(
+        "Red strip below the format badge",
+        value="MATCH TALK",
+        key="commentary_text_matchtalk_input",
+    )
     channel_title = st.text_input("Channel Brand", value="PREET SPORTS", key="channel_title_input")
 
     st.subheader("4. Remove Background from Any Image")
