@@ -13,7 +13,7 @@ import requests
 import numpy as np
 import streamlit as st
 from bs4 import BeautifulSoup
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageStat
 
 # =========================================================
 # PREET SPORTS — IMAGE 1 STYLE 4K CRICKET THUMBNAIL STUDIO
@@ -468,7 +468,7 @@ _canva_process_oauth_callback()
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v35-match-talk-ctr-refinement"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v36-flag-outline-grade-labels"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -1998,12 +1998,30 @@ def get_image_alpha_content(image):
 
 
 def apply_sports_color_grade(image):
+    """Apply the same restrained grade and mild luminance normalization to both cutouts."""
     if image is None:
         return None
-    image = ImageEnhance.Color(image).enhance(1.10)
-    image = ImageEnhance.Contrast(image).enhance(1.06)
-    image = ImageEnhance.Sharpness(image).enhance(1.24)
-    return image
+    rgba = image.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    rgb = rgba.convert("RGB")
+
+    # Pull back excess jersey saturation and keep both source photos on one consistent grade.
+    rgb = ImageEnhance.Color(rgb).enhance(1.03)
+    rgb = ImageEnhance.Contrast(rgb).enhance(1.04)
+
+    # A small, capped exposure adjustment helps source portraits match without bleaching kits.
+    try:
+        red, green, blue = ImageStat.Stat(rgb, mask=alpha).mean
+        visible_luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        brightness_factor = max(0.94, min(1.06, 112.0 / max(1.0, visible_luma)))
+        rgb = ImageEnhance.Brightness(rgb).enhance(brightness_factor)
+    except (ValueError, ZeroDivisionError):
+        pass
+
+    rgb = ImageEnhance.Sharpness(rgb).enhance(1.16)
+    graded = rgb.convert("RGBA")
+    graded.putalpha(alpha)
+    return graded
 
 
 # Exact player placement boxes measured from the 16:9 reference thumbnail.
@@ -2265,13 +2283,13 @@ def draw_team_color_backplates(canvas, team1_name, team2_name, flag1, flag2):
 
 def generate_thumbnail(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
                        t1_name, t2_name, t1_flag, t2_flag, commentary_text="HINDI COMMENTARY",
-                       design_style="PREET SPORTS — Match Talk (High Contrast)"):
+                       design_style="PREET SPORTS — Match Talk (High Contrast)", live_scale=1.0):
     if design_style == "PREET SPORTS — Match Talk (High Contrast)":
         return generate_thumbnail_match_talk(
             bg_img=bg_img, p1_img=p1_img, p2_img=p2_img,
             channel_text=channel_text, match_status=match_status, match_badge=match_badge,
             t1_name=t1_name, t2_name=t2_name, t1_flag=t1_flag, t2_flag=t2_flag,
-            commentary_text=commentary_text,
+            commentary_text=commentary_text, live_scale=live_scale,
         )
     # Real stadium first; use a hand-drawn stadium only if the remote image is unavailable.
     if bg_img is None:
@@ -2443,20 +2461,21 @@ def render_match_talk_player(canvas, player_img, side):
     x = 0 if side == "left" else CANVAS_WIDTH - new_w
     y = max(0, CANVAS_HEIGHT - new_h)
 
-    # White edge separates the player from the blue panels. Keep it fine at 4K.
     alpha = player.getchannel("A")
-    outline_alpha = alpha.filter(ImageFilter.MaxFilter(9))
-    outline_alpha = ImageChops.subtract(outline_alpha, alpha) if "ImageChops" in globals() else outline_alpha
-    if "ImageChops" in globals():
-        outline_alpha = outline_alpha.filter(ImageFilter.GaussianBlur(0.8))
-        outline = Image.new("RGBA", (new_w, new_h), (255, 255, 255, 0))
-        outline.putalpha(outline_alpha.point(lambda value: int(value * 0.95)))
-        canvas.alpha_composite(outline, (x, y))
-    shadow_alpha = alpha.filter(ImageFilter.MaxFilter(13)).filter(ImageFilter.GaussianBlur(8))
-    shadow_alpha = shadow_alpha.point(lambda value: int(value * 0.20))
+
+    # Draw the shadow first. The white keyline is composited after it so the edge stays crisp.
+    shadow_alpha = alpha.filter(ImageFilter.MaxFilter(17)).filter(ImageFilter.GaussianBlur(8))
+    shadow_alpha = shadow_alpha.point(lambda value: int(value * 0.17))
     shadow = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
     shadow.putalpha(shadow_alpha)
     canvas.alpha_composite(shadow, (x, y))
+
+    # 25 px at 4K scales to roughly 3-4 px in the 1280 × 720 preview.
+    outline_alpha = ImageChops.subtract(alpha.filter(ImageFilter.MaxFilter(25)), alpha)
+    outline_alpha = outline_alpha.filter(ImageFilter.GaussianBlur(0.45))
+    outline = Image.new("RGBA", (new_w, new_h), (255, 255, 255, 0))
+    outline.putalpha(outline_alpha.point(lambda value: int(value * 0.96)))
+    canvas.alpha_composite(outline, (x, y))
     canvas.alpha_composite(player, (x, y))
 
 
@@ -2472,7 +2491,7 @@ def draw_match_talk_arrow(draw, x, y, width, height, label, side):
     draw.polygon(points, fill=(0, 0, 0, 255))
     draw.line(points + [points[0]], fill=(255, 205, 0, 255), width=max(8, int(height * 0.055)), joint="curve")
 
-    label_font = load_robust_font(int(height * 0.52))
+    label_font = load_robust_font(int(height * 0.98))
     max_w = int(width * 0.69)
     while label_font.size > 42:
         box = draw.textbbox((0, 0), label, font=label_font)
@@ -2501,7 +2520,8 @@ def _center_font_fitted(draw, text, start_size, max_width, min_size=42):
 
 
 def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_status, match_badge,
-                                  t1_name, t2_name, t1_flag, t2_flag, commentary_text="MATCH TALK"):
+                                  t1_name, t2_name, t1_flag, t2_flag, commentary_text="MATCH TALK",
+                                  live_scale=1.0):
     """High-contrast 16:9 Match Talk layout, designed on a 4K canvas for clean export."""
     w, h = CANVAS_WIDTH, CANVAS_HEIGHT
     if bg_img is None:
@@ -2537,23 +2557,24 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     pd.polygon([(0, 0), (int(w * 0.205), 0), (int(w * 0.125), int(h * 0.84)), (0, int(h * 0.84))],
                fill=(8, 38, 205, 180))
     pd.polygon([(w, 0), (int(w * 0.795), 0), (int(w * 0.875), int(h * 0.84)), (w, int(h * 0.84))],
-               fill=(7, 35, 173, 150))
+               fill=(8, 38, 205, 180))
     pd.polygon([(int(w * 0.205), 0), (int(w * 0.222), 0),
                 (int(w * 0.142), int(h * 0.84)), (int(w * 0.125), int(h * 0.84))],
                fill=(255, 202, 0, 255))
     pd.polygon([(int(w * 0.795), 0), (int(w * 0.778), 0),
                 (int(w * 0.858), int(h * 0.84)), (int(w * 0.875), int(h * 0.84))],
-               fill=(245, 250, 255, 235))
+               fill=(255, 202, 0, 255))
     canvas = Image.alpha_composite(canvas, panel_layer)
 
     # Both flags are drawn in the upper corners first, then partly hidden by the players.
     left_main, left_accent, _ = team_palette(t1_name)
     right_main, right_accent, _ = team_palette(t2_name)
-    emblem_size = int(h * 0.205)
-    emblem_y = int(h * 0.022)
-    draw_team_flag_watermark(canvas, t1_flag, int(w * 0.008), emblem_y, emblem_size,
+    emblem_size = int(h * 0.174)  # both flags reduced by about 15%
+    emblem_y = int(h * 0.006)     # move both badges closer to the top edge
+    outer_margin = int(w * 0.003)
+    draw_team_flag_watermark(canvas, t1_flag, outer_margin, emblem_y, emblem_size,
                              left_main, left_accent, opacity=242)
-    draw_team_flag_watermark(canvas, t2_flag, w - emblem_size - int(w * 0.008), emblem_y,
+    draw_team_flag_watermark(canvas, t2_flag, w - emblem_size - outer_margin, emblem_y,
                              emblem_size, right_main, right_accent, opacity=242)
 
     # Prominent player cutouts sit in the outer thirds. This preserves a usable centre lane.
@@ -2583,7 +2604,9 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 
     # LIVE is the first focal point: ~45% canvas width, thick white edge and black depth.
     live_text = str(match_status or "LIVE").strip().upper()
-    live_font = _center_font_fitted(draw, live_text, 500, int(w * 0.455), 56)
+    live_scale = max(1.0, min(1.10, float(live_scale or 1.0)))
+    live_max_width = int(w * (0.455 if live_scale <= 1.01 else 0.50))
+    live_font = _center_font_fitted(draw, live_text, int(500 * live_scale), live_max_width, 56)
     live_bbox = draw.textbbox((0, 0), live_text, font=live_font, stroke_width=18)
     live_h = live_bbox[3] - live_bbox[1]
     live_y = int(h * 0.095)
@@ -2900,6 +2923,12 @@ with col_left:
         key="commentary_text_matchtalk_input",
     )
     channel_title = st.text_input("Channel Brand", value="PREET SPORTS", key="channel_title_input")
+    enlarge_live_title = st.checkbox(
+        "Optional: enlarge LIVE by about 10% (leave off if it touches either face)",
+        value=False,
+        key="enlarge_live_title_v1",
+    )
+    live_scale = 1.10 if enlarge_live_title else 1.0
 
     st.subheader("4. Remove Background from Any Image")
     st.caption(
@@ -3758,6 +3787,7 @@ render_signature = (
     str(match_badge),
     str(commentary_text),
     str(design_style),
+    bool(enlarge_live_title),
     _image_cache_key(bg_final),
     _image_cache_key(p1_final),
     _image_cache_key(p2_final),
@@ -3780,6 +3810,7 @@ if st.session_state.get("_thumbnail_signature") != render_signature:
             t2_flag=flag2,
             commentary_text=commentary_text,
             design_style=design_style,
+            live_scale=live_scale,
         )
         # Hard guard: the downloadable file must always be exactly 3840 x 2160.
         # The render pipeline itself uses this canvas natively; this also protects against stale/modified renderers.
