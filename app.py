@@ -3539,15 +3539,16 @@ with col_right:
             use_container_width=True,
         )
         front_pose_prompt = (
-            f"Edit this uploaded PREET SPORTS {team1} vs {team2} cricket YouTube thumbnail. Change BOTH visible players only: "
+            f"Edit this uploaded {channel_title} {team1} vs {team2} cricket YouTube thumbnail. Change BOTH visible players only: "
             f"the LEFT player representing {team1} and the RIGHT player representing {team2} should face directly toward the camera, "
             "with both eyes visible and shoulders nearly square. Keep each same person and preserve their identity, face, age, skin tone, "
             "hair, facial hair, expression, body build, exact team jersey colours, patterns, crests and sponsor logos. Keep both players "
             "in the exact same left/right positions and at similar scale; show the full head, hair and shoulders without cropping. "
-            "Do NOT change anything else: preserve PREET SPORTS branding, LIVE, T20, HINDI COMMENTARY, ENG/PAK or current team labels, "
-            "flags, stadium, crowd, grass, lighting, colours, typography, borders, diagonal panels, spacing and composition. "
-            "Do not redraw, move, misspell, remove or replace any text, flags, badges, or logos. Do not add people or objects. "
-            "Only adjust the two players' poses. Keep the same 16:9 layout and make the result photorealistic."
+            f"Do NOT change anything else: preserve the {channel_title} branding, {match_status}, {match_badge}, {commentary_text}, "
+            f"{high_ctr_team_label(team1)} and {high_ctr_team_label(team2)} team labels, flags, stadium, crowd, grass, lighting, colours, "
+            "typography, borders, diagonal panels, spacing and composition. Do not redraw, move, misspell, remove or replace any text, "
+            "flags, badges, or logos. Do not add people or objects. Only adjust the two players' poses. Keep the same 16:9 layout and "
+            "make the result photorealistic."
         )
         st.text_area(
             "Prompt to paste into Canva AI after uploading the downloaded thumbnail",
