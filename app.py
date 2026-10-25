@@ -299,6 +299,22 @@ CAPTAIN_DATABASE = {
         "name": "Nahida Akter",
         "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/65721.png",
     },
+    "ZIM-W": {
+        "name": "Josephine Nkomo",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/67315.png",
+    },
+    "ZIM W": {
+        "name": "Josephine Nkomo",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/67315.png",
+    },
+    "ZIM WOMEN": {
+        "name": "Josephine Nkomo",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/67315.png",
+    },
+    "ZIMBABWE WOMEN": {
+        "name": "Josephine Nkomo",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/67315.png",
+    },
 }
 
 
@@ -385,6 +401,11 @@ ICC_TEAM_CAPTAIN_PROFILES = {
         "ODI": "https://www.icc-cricket.com/rankings/71759/fatima-sana",
         "DEFAULT": "https://www.icc-cricket.com/rankings/71759/fatima-sana",
     },
+    "ZIM-W": {
+        "T20": "https://www.icc-cricket.com/rankings/67315/josephine-nkomo",
+        "ODI": "https://www.icc-cricket.com/rankings/67315/josephine-nkomo",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/67315/josephine-nkomo",
+    },
 }
 
 
@@ -405,6 +426,7 @@ def get_icc_team_captain_profile_url(team_name, match_format="T20"):
         "BANGLADESH": "BAN",
         "PAKISTAN": "PAK",
         "SRI LANKA": "SL",
+        "ZIMBABWE": "ZIM",
     }
     code = aliases.get(base, base) + ("-W" if is_women else "")
     badge = normalize_team_name(match_format)
@@ -417,7 +439,10 @@ def get_icc_team_captain_profile_url(team_name, match_format="T20"):
     else:
         fmt = "DEFAULT"
     profiles = ICC_TEAM_CAPTAIN_PROFILES.get(code, {})
-    return profiles.get(fmt) or profiles.get("DEFAULT")
+    if fmt == "DEFAULT":
+        return profiles.get("DEFAULT") or profiles.get("T20")
+    # Don't reuse a different format's captain when this format has no mapped profile.
+    return profiles.get(fmt)
 
 
 def get_team_flag_url(team_name):
@@ -1815,6 +1840,10 @@ with col_left:
         auto_missing = []
         auto_failed = []
         for side, team_name in (("left", team1), ("right", team2)):
+            # A manually fetched match-squad or URL image takes priority over an automatic team default.
+            source_key = "p1_cutout_source" if side == "left" else "p2_cutout_source"
+            if st.session_state.get(source_key) == "captain_url":
+                continue
             profile_url = get_icc_team_captain_profile_url(team_name, auto_format)
             if not profile_url:
                 if team_name:
