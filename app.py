@@ -3286,73 +3286,39 @@ with col_right:
         use_container_width=True,
     )
 
-    st.markdown("**Optional: ask Canva AI to front-face BOTH players in the finished thumbnail**")
+    st.markdown("**Canva AI front-pose finishing step**")
     st.caption(
-        "This sends the full thumbnail as one reference image and asks Canva to change only both player poses. "
-        "AI may still redraw lettering, flags, jerseys, faces, or other details. The original 4K render is kept unchanged; "
-        "the Canva result appears as a separate candidate for review."
+        "When both player portraits are inserted, open your saved Canva AI thread to edit the completed thumbnail. "
+        "The original 4K download above stays unchanged. The browser cannot automatically attach that PNG to the Canva thread, "
+        "so upload the downloaded PNG in Canva AI and paste the instruction below."
     )
-    canva_full_pose_clicked = st.button(
-        "🎨 Ask Canva AI to front-face BOTH players",
-        key="canva_frontface_both_players_in_thumbnail",
-        use_container_width=True,
-    )
-    if canva_full_pose_clicked:
-        if not str(st.session_state.get("canva_access_token", "") or "").strip():
-            st.warning("Connect Canva in Section 8 before using full-thumbnail pose editing.")
-        else:
-            full_thumb_prompt = (
-                f"EDIT THE PROVIDED EXISTING 16:9 PREET SPORTS CRICKET YOUTUBE THUMBNAIL. Make a localized pose edit only. "
-                f"Change BOTH visible cricket players: the LEFT player representing {team1} and the RIGHT player representing {team2}, "
-                "from side-facing or three-quarter poses to direct front-facing poses, looking straight at the camera with both "
-                "eyes visible and shoulders nearly square. Preserve each same person's identity as closely as possible: face shape, "
-                "age, skin tone, hair and facial hair, expression, body build, and exact team jersey colors, patterns, sponsor marks "
-                "and logos. Keep both players in their original left/right positions and at the same approximate scale and crop; "
-                "show the full hair and shoulders without cutting off the head. "
-                "LOCK EVERYTHING ELSE: do not change the PREET SPORTS logo, any words or typography, LIVE, match-format badge, "
-                "commentary banner, team abbreviations, flags, stadium, lighting, grass, crowd, colors, borders, diagonal panels, "
-                "shadows, spacing, or composition. Do not invent, remove, misspell, translate, redraw, or move any text, badge, "
-                "logo or flag. Do not add objects or people. Keep the original layout and all design elements in their exact positions. "
-                "Only adjust the two players' poses. Photorealistic result."
-            )
-            with st.spinner("Sending the complete thumbnail to Canva AI. One generation job may use Canva AI allowance…"):
-                edited_thumb, edit_error = _canva_mcp_edit_player(
-                    output_png,
-                    full_thumb_prompt,
-                    aspect_ratio="LANDSCAPE_16_9",
-                    max_edge=2000,
-                    user_intent=f"Edit this finished {team1} vs {team2} cricket thumbnail by changing only both player poses to face the camera.",
-                    remove_magenta=False,
-                )
-            if edited_thumb is not None:
-                st.session_state["canva_full_thumbnail_pose_candidate"] = edited_thumb.convert("RGB")
-                st.session_state["canva_full_thumbnail_pose_signature"] = render_signature
-                st.success("Canva returned a full-thumbnail pose-edit candidate. Review it carefully before using it.")
-            else:
-                st.error(edit_error)
-
-    if (
-        st.session_state.get("canva_full_thumbnail_pose_candidate") is not None
-        and st.session_state.get("canva_full_thumbnail_pose_signature") == render_signature
-    ):
-        candidate = st.session_state["canva_full_thumbnail_pose_candidate"]
-        st.markdown("**Canva AI full-thumbnail candidate — review before use**")
-        st.image(candidate.resize((1280, 720), Image.Resampling.LANCZOS), use_container_width=True)
-        st.warning(
-            f"Returned image size: {candidate.width} × {candidate.height} px. This is an AI-edited candidate, not a guaranteed lossless 4K original. "
-            "Text, logos, flags, jersey details and faces may differ from the original. The main thumbnail remains unchanged."
-        )
-        candidate_buffer = io.BytesIO()
-        candidate_4k = candidate.resize((3840, 2160), Image.Resampling.LANCZOS)
-        candidate_4k.save(candidate_buffer, format="PNG", optimize=False, compress_level=1)
-        st.download_button(
-            label="⬇️ Download Canva AI candidate resized to 4K",
-            data=candidate_buffer.getvalue(),
-            file_name=f"{normalize_team_name(team1).replace(' ', '_')}_vs_{normalize_team_name(team2).replace(' ', '_')}_Canva_AI_pose_candidate_4K.png",
-            mime="image/png",
+    if p1_final is not None and p2_final is not None:
+        st.success("Both player portraits are present. Your thumbnail is ready for the Canva AI front-pose step.")
+        st.link_button(
+            "🎨 Open Canva AI — Front-Face Both Players",
+            "https://www.canva.com/ai/thread/d6f8e609-0db7-41ea-99df-c35972f16edc",
             use_container_width=True,
-            key="download_canva_full_thumbnail_pose_candidate",
         )
+        front_pose_prompt = (
+            f"Edit this uploaded PREET SPORTS {team1} vs {team2} cricket YouTube thumbnail. Change BOTH visible players only: "
+            f"the LEFT player representing {team1} and the RIGHT player representing {team2} should face directly toward the camera, "
+            "with both eyes visible and shoulders nearly square. Keep each same person and preserve their identity, face, age, skin tone, "
+            "hair, facial hair, expression, body build, exact team jersey colours, patterns, crests and sponsor logos. Keep both players "
+            "in the exact same left/right positions and at similar scale; show the full head, hair and shoulders without cropping. "
+            "Do NOT change anything else: preserve PREET SPORTS branding, LIVE, T20, HINDI COMMENTARY, ENG/PAK or current team labels, "
+            "flags, stadium, crowd, grass, lighting, colours, typography, borders, diagonal panels, spacing and composition. "
+            "Do not redraw, move, misspell, remove or replace any text, flags, badges, or logos. Do not add people or objects. "
+            "Only adjust the two players' poses. Keep the same 16:9 layout and make the result photorealistic."
+        )
+        st.text_area(
+            "Prompt to paste into Canva AI after uploading the downloaded thumbnail",
+            value=front_pose_prompt,
+            height=190,
+            key="canva_browser_frontpose_prompt",
+            disabled=True,
+        )
+    else:
+        st.info("Select or fetch both player portraits first. The Canva AI front-pose link appears when both players are in the thumbnail.")
 
 st.divider()
-st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run on the app server. One-click front-facing conversion uses Canva when connected, or the hosted Replicate Qwen Image Edit Plus API when REPLICATE_API_TOKEN is configured. Hosted inference may be billed per output image. AI can alter facial identity, and hidden pixels cannot be recovered exactly.")
+st.caption("LOCAL-FIRST: player selection, cached local U2NETP/OpenCV background removal, composition, and 3840 × 2160 PNG export run on the app server. Use the Canva AI browser link below the preview to manually upload the completed thumbnail and request front-facing poses; the app does not send your thumbnail to Canva automatically. AI may alter facial identity or design details.")
