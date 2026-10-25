@@ -953,12 +953,87 @@ def remove_background_from_any_image(upload_bytes, filename="image", subject_ins
         )
 
 def convert_player_to_front_facing(upload_bytes, filename, side):
-    """Use a locally running ComfyUI API workflow to create a front-facing player portrait.
+    """Use Replicate Qwen Image Edit Plus when configured, otherwise use ComfyUI."""
+    side_label = "left" if side == "left" else "right"
+    prompt = (
+        "Edit the provided reference photo, do not create a different person. Turn this same real cricket player "
+        "to face directly toward the camera, with both eyes visible and shoulders nearly square. Preserve identity "
+        "as closely as possible: face shape, eye spacing, nose, lips, jaw, skin tone, age, hairline, hairstyle, "
+        "expression, body build, and exact cricket jersey colours and visible details. Keep realistic photographic "
+        "skin texture. Do not beautify or replace the person. Do not add text, flags, logos, watermarks, props, "
+        "or extra people. Show the full head, both ears where anatomically visible, shoulders, and upper torso with "
+        "generous margin; do not crop hair or shoulders. Use a flat pure magenta (#FF00FF) background edge-to-edge, "
+        "without gradient or shadow, so the app can remove it locally. Portrait for the " + side_label +
+        " side of a cricket YouTube thumbnail."
+    )
 
-    Configure an API-format workflow in Section 8. Set the image node ID/input and
-    positive-prompt node ID/input to match the exported ComfyUI workflow.
-    Returns (PIL.Image or None, error message or None).
-    """
+    # Hosted reference-image editing. No API request is sent until the user clicks Convert.
+    # Replicate currently lists Qwen Image Edit Plus at about US$0.03 per output image.
+    replicate_token = str(os.environ.get("REPLICATE_API_TOKEN", "")).strip()
+    if replicate_token:
+        try:
+            with Image.open(io.BytesIO(upload_bytes)) as opened:
+                opened.load()
+                source = opened.convert("RGBA")
+                if max(source.size) > 1400:
+                    scale = 1400 / float(max(source.size))
+                    source = source.resize((max(1, int(source.width * scale)), max(1, int(source.height * scale))), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                if source.getchannel("A").getextrema()[0] < 250:
+                    source.save(buf, format="PNG", optimize=False)
+                    mime = "image/png"
+                else:
+                    source.convert("RGB").save(buf, format="JPEG", quality=90, optimize=False)
+                    mime = "image/jpeg"
+            data_uri = "data:" + mime + ";base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+            headers = {
+                "Authorization": "Bearer " + replicate_token,
+                "Content-Type": "application/json",
+                "Prefer": "wait=60",
+            }
+            response = requests.post(
+                "https://api.replicate.com/v1/models/qwen/qwen-image-edit-plus/predictions",
+                headers=headers,
+                json={"input": {
+                    "image": [data_uri],
+                    "prompt": prompt,
+                    "go_fast": True,
+                    "aspect_ratio": "match_input_image",
+                    "output_format": "png",
+                    "output_quality": 95,
+                }},
+                timeout=(15, 120),
+            )
+            if response.status_code >= 400:
+                return None, (
+                    f"Replicate image edit failed (HTTP {response.status_code}): {response.text[:700]}. "
+                    "Check the REPLICATE_API_TOKEN secret and your Replicate billing/credits."
+                )
+            prediction = response.json()
+            poll_url = prediction.get("urls", {}).get("get")
+            time_module = __import__("time")
+            deadline = time_module.time() + 240
+            while prediction.get("status") not in ("succeeded", "failed", "canceled"):
+                if not poll_url or time_module.time() >= deadline:
+                    return None, "The hosted image edit is still processing or timed out. Try again in a moment."
+                time_module.sleep(2)
+                poll_response = requests.get(poll_url, headers={"Authorization": "Bearer " + replicate_token}, timeout=(10, 30))
+                poll_response.raise_for_status()
+                prediction = poll_response.json()
+            if prediction.get("status") != "succeeded":
+                return None, "Replicate image edit did not complete: " + str(prediction.get("error") or prediction.get("status"))
+            outputs = prediction.get("output") or []
+            output_url = outputs[0] if isinstance(outputs, list) and outputs else outputs if isinstance(outputs, str) else None
+            if not output_url:
+                return None, "Replicate completed but returned no output image."
+            image_response = requests.get(output_url, timeout=(10, 60))
+            image_response.raise_for_status()
+            with Image.open(io.BytesIO(image_response.content)) as edited:
+                edited.load()
+                return edited.convert("RGBA"), None
+        except Exception as exc:
+            return None, f"Hosted image edit error: {exc}"
+
     base_url = str(st.session_state.get("comfyui_url", os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188"))).strip().rstrip("/")
     workflow_text = str(st.session_state.get("comfyui_workflow_json", os.environ.get("COMFYUI_API_WORKFLOW", ""))).strip()
     image_node_id = str(st.session_state.get("comfyui_image_node_id", "")).strip()
@@ -2714,8 +2789,9 @@ def _pose_source_hash(image):
 # ICC auto-fetched images. They are separate from the optional manual-upload controls above.
 st.markdown("**Front-face the current thumbnail portraits**")
 st.caption(
-    "Use this for the ICC/URL images already in the preview. The selected portrait is sent to your configured ComfyUI workflow; "
-    "the original is retained if conversion fails. Conversion may take several minutes on CPU."
+    "One-click reference-image editing: set REPLICATE_API_TOKEN in Render Environment for the hosted Qwen Image Edit Plus model "
+    "(about US$0.03 per output image; paid inference, not unlimited free). If that secret is absent, the app falls back to the existing ComfyUI workflow. "
+    "The original portrait is retained if conversion fails."
 )
 pose_left_col, pose_right_col = st.columns(2)
 with pose_left_col:
@@ -2733,7 +2809,7 @@ if convert_selected_left:
     else:
         source_bytes = _pose_source_png_bytes(p1_final)
         source_hash = hashlib.sha1(source_bytes).hexdigest()
-        with st.spinner("Creating a front-facing LEFT portrait with ComfyUI…"):
+        with st.spinner("Creating a front-facing LEFT portrait with the configured image-edit model…"):
             edited, error = convert_player_to_front_facing(source_bytes, "selected_left_player.png", "left")
         if edited is not None:
             st.session_state["p1_selected_pose_front"] = edited
@@ -2748,7 +2824,7 @@ if convert_selected_right:
     else:
         source_bytes = _pose_source_png_bytes(p2_final)
         source_hash = hashlib.sha1(source_bytes).hexdigest()
-        with st.spinner("Creating a front-facing RIGHT portrait with ComfyUI…"):
+        with st.spinner("Creating a front-facing RIGHT portrait with the configured image-edit model…"):
             edited, error = convert_player_to_front_facing(source_bytes, "selected_right_player.png", "right")
         if edited is not None:
             st.session_state["p2_selected_pose_front"] = edited
@@ -2876,4 +2952,4 @@ with col_right:
     )
 
 st.divider()
-st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run on the app server without Gemini API calls. Front-facing pose conversion requires a separately running ComfyUI-compatible endpoint and an identity-aware workflow; no model weights are downloaded by this app. AI can change facial identity, and segmentation cannot reconstruct hidden pixels.")
+st.caption("LOCAL-FIRST: cropping, cached local U2NETP/OpenCV background removal, cached cutouts, composition, and 3840 × 2160 PNG export run on the app server. One-click front-facing conversion supports the hosted Replicate Qwen Image Edit Plus API when REPLICATE_API_TOKEN is configured; otherwise it uses the optional ComfyUI workflow. Hosted inference is billed per output image. AI can alter facial identity, and hidden pixels cannot be recovered exactly.")
