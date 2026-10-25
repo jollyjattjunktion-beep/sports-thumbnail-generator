@@ -468,7 +468,7 @@ _canva_process_oauth_callback()
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v31-reference-match-talk"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v32-live-outline-spacing-fix"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -2430,7 +2430,7 @@ def render_match_talk_player(canvas, player_img, side):
     if player_img is None:
         return
     player = get_image_alpha_content(apply_sports_color_grade(player_img)).convert("RGBA")
-    max_w = int(CANVAS_WIDTH * 0.365)
+    max_w = int(CANVAS_WIDTH * (0.345 if side == "left" else 0.405))
     max_h = int(CANVAS_HEIGHT * 0.995)
     scale = min(max_w / max(1, player.width), max_h / max(1, player.height))
     new_w = max(1, int(round(player.width * scale)))
@@ -2457,7 +2457,7 @@ def draw_match_talk_arrow(draw, x, y, width, height, label, side):
                   (x + height // 2, y + height), (x, y + height // 2)]
     draw.polygon(points, fill=(0, 0, 0, 255))
     draw.line(points + [points[0]], fill=(255, 205, 0, 255), width=22, joint="curve")
-    label_font = load_robust_font(238)
+    label_font = load_robust_font(180)
     max_w = int(width * 0.62)
     while label_font.size > 82:
         box = draw.textbbox((0, 0), label, font=label_font)
@@ -2542,11 +2542,11 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 
     # Small, rectangular top-centre brand plate; keep PREET SPORTS identity.
     brand_text = str(channel_text or "PREET SPORTS").strip().upper()
-    brand_font = _center_font_fitted(draw, brand_text, 96, int(w * 0.31), 48)
+    brand_font = _center_font_fitted(draw, brand_text, 114, int(w * 0.32), 48)
     brand_box = draw.textbbox((0, 0), brand_text, font=brand_font)
     brand_tw, brand_th = brand_box[2] - brand_box[0], brand_box[3] - brand_box[1]
     brand_w = max(int(w * 0.265), brand_tw + 108)
-    brand_h = max(142, brand_th + 44)
+    brand_h = max(166, brand_th + 46)
     brand_x = (w - brand_w) // 2
     brand_y = 28
     draw.rectangle((brand_x - 8, brand_y - 8, brand_x + brand_w + 8, brand_y + brand_h + 8),
@@ -2560,14 +2560,15 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 
     # Huge red LIVE headline with black depth and keyline, centered in the open sky.
     live_text = str(match_status or "LIVE").strip().upper()
-    live_font = _center_font_fitted(draw, live_text, 520, int(w * 0.43), 72)
-    live_y = int(h * 0.205)
-    draw_centered_text(draw, w, live_text, live_y + 18, live_font, (4, 6, 12, 255),
-                       stroke_width=44, stroke_fill=(4, 6, 12, 255))
+    live_font = _center_font_fitted(draw, live_text, 490, int(w * 0.42), 72)
+    live_y = int(h * 0.18)
+    # Three clean layers: one restrained black shadow, one white keyline, then pure red fill.
+    # The old black inner stroke over the white outline made LIVE look excessively chunky.
+    draw_centered_text(draw, w, live_text, live_y + 12, live_font, (0, 0, 0, 255),
+                       stroke_width=24, stroke_fill=(0, 0, 0, 255))
     draw_centered_text(draw, w, live_text, live_y, live_font, (255, 255, 255, 255),
-                       stroke_width=25, stroke_fill=(255, 255, 255, 255))
-    draw_centered_text(draw, w, live_text, live_y, live_font, (230, 8, 19, 255),
-                       stroke_width=10, stroke_fill=(6, 6, 6, 255))
+                       stroke_width=15, stroke_fill=(255, 255, 255, 255))
+    draw_centered_text(draw, w, live_text, live_y, live_font, (232, 15, 23, 255))
 
     # Rectangular split badge: white ordinal at left, black panel with yellow format at right.
     badge_text = str(match_badge or "T20").strip()
@@ -2578,14 +2579,14 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     if ordinal_match:
         ordinal_text = ordinal_match.group(1)
         format_text = ordinal_match.group(2).upper()
-        badge_w = int(w * 0.30)
+        badge_w = int(w * 0.32)
         left_panel_w = int(badge_w * 0.43)
     else:
         ordinal_text = ""
         format_text = badge_text.upper()
-        badge_w = int(w * 0.30)
+        badge_w = int(w * 0.32)
         left_panel_w = 0
-    badge_h = int(h * 0.155)
+    badge_h = int(h * 0.13)
     badge_x = (w - badge_w) // 2
     badge_y = int(h * 0.435)
     draw.rectangle((badge_x - 14, badge_y - 14, badge_x + badge_w + 14, badge_y + badge_h + 14),
@@ -2600,7 +2601,7 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
         draw.line((badge_x + left_panel_w, badge_y + 12, badge_x + left_panel_w, badge_y + badge_h - 12),
                   fill=(255, 203, 0, 255), width=10)
     if ordinal_text:
-        ordinal_font = _center_font_fitted(draw, ordinal_text, 240, left_panel_w - 50, 72)
+        ordinal_font = _center_font_fitted(draw, ordinal_text, 205, left_panel_w - 50, 72)
         ob = draw.textbbox((0, 0), ordinal_text, font=ordinal_font)
         ow, oh = ob[2] - ob[0], ob[3] - ob[1]
         ox = badge_x + (left_panel_w - ow) // 2
@@ -2611,7 +2612,7 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     else:
         format_area_x = badge_x
         format_area_w = badge_w
-    format_font = _center_font_fitted(draw, format_text, 260, format_area_w - 44, 70)
+    format_font = _center_font_fitted(draw, format_text, 220, format_area_w - 44, 70)
     fb = draw.textbbox((0, 0), format_text, font=format_font)
     fw, fh = fb[2] - fb[0], fb[3] - fb[1]
     fx = format_area_x + (format_area_w - fw) // 2
@@ -2621,13 +2622,13 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
 
     # Red MATCH TALK strip directly below the split format badge.
     talk_text = str(commentary_text or "MATCH TALK").strip().upper()
-    talk_font = _center_font_fitted(draw, talk_text, 168, int(w * 0.39) - 70, 52)
+    talk_font = _center_font_fitted(draw, talk_text, 128, int(w * 0.36) - 58, 52)
     talk_box = draw.textbbox((0, 0), talk_text, font=talk_font)
     talk_tw, talk_th = talk_box[2] - talk_box[0], talk_box[3] - talk_box[1]
-    talk_w = min(int(w * 0.39), max(int(w * 0.36), talk_tw + 100))
-    talk_h = int(h * 0.115)
+    talk_w = min(int(w * 0.35), max(int(w * 0.32), talk_tw + 84))
+    talk_h = int(h * 0.125)
     talk_x = (w - talk_w) // 2
-    talk_y = int(h * 0.595)
+    talk_y = int(h * 0.605)
     draw.rectangle((talk_x - 12, talk_y - 12, talk_x + talk_w + 12, talk_y + talk_h + 12),
                    fill=(4, 8, 15, 255))
     draw.rectangle((talk_x, talk_y, talk_x + talk_w, talk_y + talk_h),
@@ -2638,9 +2639,9 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
               stroke_width=2, stroke_fill=(20, 12, 12, 255))
 
     # Black bottom plates with yellow outlines; arrows point inward from both sides.
-    team_y = int(h * 0.745)
+    team_y = int(h * 0.80)
     team_w = int(w * 0.405)
-    team_h = int(h * 0.17)
+    team_h = int(h * 0.15)
     draw_match_talk_arrow(draw, 0, team_y, team_w, team_h, high_ctr_team_label(t1_name), "left")
     draw_match_talk_arrow(draw, w - team_w, team_y, team_w, team_h, high_ctr_team_label(t2_name), "right")
 
