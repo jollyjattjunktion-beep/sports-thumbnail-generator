@@ -2423,9 +2423,14 @@ with col_left:
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
     st.subheader("8. Local AI Tool — Front-Facing Pose Conversion (ComfyUI)")
     st.info(
-        "Pose conversion uses your own ComfyUI server; no Gemini API key or hosted image API is used. "
-        "Run ComfyUI on this same PC (normally http://127.0.0.1:8188), paste an API-format workflow below, "
-        "and set the Load Image node ID plus the positive-prompt node ID. Your workflow must include a Save Image node."
+        "Pose conversion uses ComfyUI and does not require Gemini. Use the buttons below to convert either an uploaded photo "
+        "or the currently selected ICC/URL captain portrait. The workflow should preserve identity and produce a front-facing "
+        "head-and-shoulders portrait on a pure magenta background. Keep in mind AI can alter faces, so inspect each result."
+    )
+    st.warning(
+        "Important for the Render website: http://127.0.0.1:8188 points to the Render server, not your home PC. "
+        "For free local processing, run this Streamlit app and ComfyUI on the same PC. If using Render, the ComfyUI server "
+        "must be securely reachable from Render; do not expose an unauthenticated ComfyUI server to the public internet."
     )
     comfy_col1, comfy_col2 = st.columns(2)
     with comfy_col1:
@@ -2603,6 +2608,75 @@ else:
 # Optional correction for reference thumbnails whose player order is reversed.
 if swap_player_photos:
     p1_final, p2_final = p2_final, p1_final
+
+
+def _pose_source_png_bytes(image):
+    """Serialize a selected portrait in a stable, hashable PNG representation."""
+    if image is None:
+        return None
+    buffer = io.BytesIO()
+    image.convert("RGBA").save(buffer, format="PNG", optimize=False, compress_level=1)
+    return buffer.getvalue()
+
+
+def _pose_source_hash(image):
+    payload = _pose_source_png_bytes(image)
+    return hashlib.sha1(payload).hexdigest() if payload else None
+
+
+# These buttons work with the portraits already selected for the thumbnail, including
+# ICC auto-fetched images. They are separate from the optional manual-upload controls above.
+st.markdown("**Front-face the current thumbnail portraits**")
+st.caption(
+    "Use this for the ICC/URL images already in the preview. The selected portrait is sent to your configured ComfyUI workflow; "
+    "the original is retained if conversion fails. Conversion may take several minutes on CPU."
+)
+pose_left_col, pose_right_col = st.columns(2)
+with pose_left_col:
+    convert_selected_left = st.button(
+        "🎯 Front-face CURRENT LEFT portrait", use_container_width=True, key="convert_selected_left_front_v1"
+    )
+with pose_right_col:
+    convert_selected_right = st.button(
+        "🎯 Front-face CURRENT RIGHT portrait", use_container_width=True, key="convert_selected_right_front_v1"
+    )
+
+if convert_selected_left:
+    if p1_final is None:
+        st.warning("No LEFT portrait is currently selected. Fetch or choose an image first.")
+    else:
+        source_bytes = _pose_source_png_bytes(p1_final)
+        source_hash = hashlib.sha1(source_bytes).hexdigest()
+        with st.spinner("Creating a front-facing LEFT portrait with ComfyUI…"):
+            edited, error = convert_player_to_front_facing(source_bytes, "selected_left_player.png", "left")
+        if edited is not None:
+            st.session_state["p1_selected_pose_front"] = edited
+            st.session_state["p1_selected_pose_source_hash"] = source_hash
+            st.success("Front-facing LEFT portrait generated. Review the preview before downloading.")
+        else:
+            st.error(error)
+
+if convert_selected_right:
+    if p2_final is None:
+        st.warning("No RIGHT portrait is currently selected. Fetch or choose an image first.")
+    else:
+        source_bytes = _pose_source_png_bytes(p2_final)
+        source_hash = hashlib.sha1(source_bytes).hexdigest()
+        with st.spinner("Creating a front-facing RIGHT portrait with ComfyUI…"):
+            edited, error = convert_player_to_front_facing(source_bytes, "selected_right_player.png", "right")
+        if edited is not None:
+            st.session_state["p2_selected_pose_front"] = edited
+            st.session_state["p2_selected_pose_source_hash"] = source_hash
+            st.success("Front-facing RIGHT portrait generated. Review the preview before downloading.")
+        else:
+            st.error(error)
+
+# Apply cached generated portraits only to the exact source image used to create them.
+# When the team or captain changes, the old AI edit will not silently replace the new player.
+if p1_final is not None and st.session_state.get("p1_selected_pose_source_hash") == _pose_source_hash(p1_final):
+    p1_final = st.session_state.get("p1_selected_pose_front") or p1_final
+if p2_final is not None and st.session_state.get("p2_selected_pose_source_hash") == _pose_source_hash(p2_final):
+    p2_final = st.session_state.get("p2_selected_pose_front") or p2_final
 
 if custom_p1 and not left_is_cutout and st.session_state.p1_ai_source_hash != left_upload_hash:
     st.info("Left upload has no transparent background yet. Press ‘Convert LEFT to front-facing’ to create a cutout.")
