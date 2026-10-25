@@ -287,8 +287,10 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
     if not token:
         return None, token_error
     client = _CanvaMCPClient(token)
+    stage = "opening the Canva MCP session"
     try:
         client.initialize()
+        stage = "preparing the reference portrait and requesting a Canva upload URL"
         with Image.open(io.BytesIO(upload_bytes)) as opened:
             opened.load()
             source = opened.convert("RGBA")
@@ -310,6 +312,7 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
         upload_url = upload_info.get("uploadUrl") or upload_info.get("upload_url")
         if not upload_url:
             raise RuntimeError("Canva did not return an upload URL. Check that asset:write is enabled for the Canva developer app.")
+        stage = "uploading the reference portrait to Canva"
         upload_response = requests.post(
             upload_url,
             data=upload_buffer.getvalue(),
@@ -323,6 +326,7 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
         if not media_id:
             raise RuntimeError("Canva accepted the upload but did not return mediaId.")
 
+        stage = "submitting the front-facing pose request to Canva generate-image"
         job_result = client.call_tool(
             "generate-image",
             {
@@ -337,6 +341,7 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
             job_id = job_result["job"].get("id")
         if not job_id:
             raise RuntimeError("Canva did not return an image-edit job ID. No second generation request was sent.")
+        stage = "checking the Canva image-generation job"
         deadline = time.time() + 150
         completed_job = None
         while time.time() < deadline:
@@ -352,6 +357,7 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
         if completed_job is None:
             raise RuntimeError("Canva is still processing this edit after 150 seconds. Check Canva before retrying so you don't spend another AI credit unnecessarily.")
 
+        stage = "retrieving the generated portrait from Canva"
         result_obj = completed_job.get("result", {})
         results = result_obj.get("results", []) if isinstance(result_obj, dict) else []
         media_output = next((item for item in results if isinstance(item, dict) and item.get("type") == "MEDIA" and item.get("id")), None)
@@ -427,7 +433,10 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
                 raise RuntimeError(str(exc)) from exc
         return output_image, None
     except Exception as exc:
-        return None, f"Canva AI front-pose conversion failed: {exc}"
+        # Identify the failing stage so a generic upstream HTTP 500 can be separated
+        # from OAuth, upload, job polling, or output-download problems. Do not auto-retry
+        # generation here, because a server error can occur after a billable job starts.
+        return None, f"Canva AI front-pose conversion failed while {stage}: {exc}"
 
 
 # Process the callback when Canva redirects the browser back into this Streamlit app.
