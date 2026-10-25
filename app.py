@@ -468,7 +468,7 @@ _canva_process_oauth_callback()
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
-RENDER_PIPELINE_VERSION = "preet-sports-4k-v33-reference-final-spacing"
+RENDER_PIPELINE_VERSION = "preet-sports-4k-v34-team-badge-banner-scale"
 EXPECTED_OUTPUT_SIZE = (CANVAS_WIDTH, CANVAS_HEIGHT)
 
 # Default panoramic cricket-stadium photo (Unsplash, free to use under Unsplash License).
@@ -2457,7 +2457,7 @@ def draw_match_talk_arrow(draw, x, y, width, height, label, side):
                   (x + height // 2, y + height), (x, y + height // 2)]
     draw.polygon(points, fill=(0, 0, 0, 255))
     draw.line(points + [points[0]], fill=(255, 205, 0, 255), width=22, joint="curve")
-    label_font = load_robust_font(500)
+    label_font = load_robust_font(300)
     max_w = int(width * 0.76)
     while label_font.size > 82:
         box = draw.textbbox((0, 0), label, font=label_font)
@@ -2530,8 +2530,9 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
     left_main, left_accent, _ = team_palette(t1_name)
     right_main, right_accent, _ = team_palette(t2_name)
     emblem_size = 460
-    # The reference uses a single circular team badge at the upper-right; it does not place a second
-    # giant flag circle behind the left player's head.
+    # Keep both teams' circular emblems behind their respective portraits.
+    # This ensures England's badge is visible at the upper-left instead of being omitted.
+    draw_team_flag_watermark(canvas, t1_flag, 0, 42, emblem_size, left_main, left_accent, opacity=238)
     draw_team_flag_watermark(canvas, t2_flag, w - emblem_size, 42, emblem_size, right_main, right_accent, opacity=238)
 
     # Large left/right player cutouts, placed behind the central text and bottom team plates.
@@ -2641,9 +2642,9 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
               stroke_width=2, stroke_fill=(20, 12, 12, 255))
 
     # Black bottom plates with yellow outlines; arrows point inward from both sides.
-    team_y = int(h * 0.665)
+    team_y = int(h * 0.75)
     team_w = int(w * 0.405)
-    team_h = int(h * 0.27)
+    team_h = int(h * 0.20)
     draw_match_talk_arrow(draw, 0, team_y, team_w, team_h, high_ctr_team_label(t1_name), "left")
     draw_match_talk_arrow(draw, w - team_w, team_y, team_w, team_h, high_ctr_team_label(t2_name), "right")
 
