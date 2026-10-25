@@ -2491,7 +2491,7 @@ def draw_match_talk_arrow(draw, x, y, width, height, label, side):
     draw.polygon(points, fill=(0, 0, 0, 255))
     draw.line(points + [points[0]], fill=(255, 205, 0, 255), width=max(8, int(height * 0.055)), joint="curve")
 
-    label_font = load_robust_font(int(height * 0.98))
+    label_font = load_robust_font(int(height * 1.12))
     max_w = int(width * 0.69)
     while label_font.size > 42:
         box = draw.textbbox((0, 0), label, font=label_font)
