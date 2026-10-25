@@ -1742,11 +1742,11 @@ def fetch_from_icc_match_url(url):
         "274145": [
             {
                 "name": "England", "code": "ENG", "captain": "Harry Brook",
-                "img_url": "https://www.icc-cricket.com/rankings/66374/harry-brook",
+                "img_url": "https://www.icc-cricket.com/rankings/66374/harry-brook", "match_badge": "4th ODI",
             },
             {
                 "name": "Pakistan", "code": "PAK", "captain": "Shaheen Afridi",
-                "img_url": "https://www.icc-cricket.com/rankings/66833/shaheen-afridi/",
+                "img_url": "https://www.icc-cricket.com/rankings/66833/shaheen-afridi/", "match_badge": "4th ODI",
             },
         ],
     }
@@ -2695,6 +2695,8 @@ with col_left:
                     st.session_state.t2_code = teams[1]["name"]
                     st.session_state["team1_name_input"] = teams[0]["name"]
                     st.session_state["team2_name_input"] = teams[1]["name"]
+                    if teams[0].get("match_badge"):
+                        st.session_state["match_badge_input"] = teams[0]["match_badge"]
                     photo_errors = []
                     for index, side in enumerate(("left", "right")):
                         team = teams[index]
@@ -2864,7 +2866,7 @@ with col_left:
     with col_badge:
         match_badge = st.text_input(
             "Match Format / Number Badge (e.g. 2nd T20, 1st ODI)",
-            value="2nd T20",
+            value="4th ODI",
             key="match_badge_input",
         )
     commentary_text = st.text_input(
