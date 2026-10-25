@@ -3011,9 +3011,9 @@ with col_left:
             st.rerun()
     elif not canva_client_id or not canva_client_secret:
         st.warning(
-            "To enable Canva, create an app at canva.com/developers, enable **Canva MCP** under Outside Canva, "
-            "and add CANVA_CLIENT_ID, CANVA_CLIENT_SECRET, and CANVA_REDIRECT_URI to Render Environment. "
-            "Never paste the client secret into this page or commit it to GitHub."
+            "To enable Canva, create an app at canva.com/developers, enable **Canva MCP** and **Canva REST APIs** under Outside Canva, "
+            "enable the asset:read and asset:write scopes, and add CANVA_CLIENT_ID, CANVA_CLIENT_SECRET, and CANVA_REDIRECT_URI to Render Environment. "
+            "Register the same redirect URL in Canva Developer Portal. Never paste the client secret into this page or commit it to GitHub."
         )
         st.markdown("[Open Canva Developer Portal](https://www.canva.com/developers/)")
     elif not canva_redirect_uri:
