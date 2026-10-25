@@ -5,7 +5,9 @@ import hashlib
 import json
 import os
 import re
-from urllib.parse import urlsplit, urlunsplit, urljoin
+import secrets
+import time
+from urllib.parse import urlsplit, urlunsplit, urljoin, urlencode
 
 import requests
 import numpy as np
@@ -18,6 +20,396 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 # 3840 x 2160 | URL-based captain images | realistic stadium BG
 # =========================================================
 st.set_page_config(page_title="PREET SPORTS 4K Thumbnail Studio", layout="wide")
+
+
+# =========================================================
+# Canva MCP — reference-image editing OAuth helpers
+# Uses the official Canva MCP image-editing tool with MEDIA references.
+# OAuth credentials must be set in the hosting environment, never committed here.
+# =========================================================
+CANVA_MCP_URL = "https://api.canva.com/connect/v1/mcp"
+CANVA_TOKEN_URL = "https://api.canva.com/rest/v1/oauth/token"
+
+@st.cache_resource
+def _canva_pending_oauth_store():
+    """Short-lived server-memory store for PKCE verifiers across the OAuth redirect."""
+    return {}
+
+
+def _canva_oauth_redirect_uri():
+    configured = str(os.environ.get("CANVA_REDIRECT_URI", "")).strip()
+    return configured
+
+
+def _canva_authorization_link():
+    client_id = str(os.environ.get("CANVA_CLIENT_ID", "")).strip()
+    client_secret = str(os.environ.get("CANVA_CLIENT_SECRET", "")).strip()
+    redirect_uri = _canva_oauth_redirect_uri()
+    if not client_id or not client_secret:
+        return None, "Add CANVA_CLIENT_ID and CANVA_CLIENT_SECRET in Render Environment."
+    if not redirect_uri:
+        return None, "Add CANVA_REDIRECT_URI in Render Environment and register the same URL in Canva Developer Portal."
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("utf-8")).digest()).decode("ascii").rstrip("=")
+    state = secrets.token_urlsafe(32)
+    now = time.time()
+    pending = _canva_pending_oauth_store()
+    for old_state, value in list(pending.items()):
+        if now - float(value.get("created_at", 0)) > 900:
+            pending.pop(old_state, None)
+    pending[state] = {"verifier": verifier, "created_at": now}
+    query = urlencode({
+        "client_id": client_id,
+        "response_type": "code",
+        "scope": "asset:read asset:write",
+        "redirect_uri": redirect_uri,
+        "code_challenge": challenge,
+        "code_challenge_method": "s256",
+        "state": state,
+    })
+    return "https://www.canva.com/api/oauth/authorize?" + query, None
+
+
+def _canva_process_oauth_callback():
+    """Exchange a Canva OAuth code for tokens on the redirect back to this app."""
+    try:
+        query = st.query_params
+        code = str(query.get("code", "") or "")
+        state = str(query.get("state", "") or "")
+        oauth_error = str(query.get("error_description", "") or query.get("error", "") or "")
+        if not code and not state and not oauth_error:
+            return
+        if oauth_error:
+            st.session_state["canva_oauth_error"] = oauth_error[:500]
+        else:
+            pending = _canva_pending_oauth_store().pop(state, None)
+            if not pending or time.time() - float(pending.get("created_at", 0)) > 900:
+                st.session_state["canva_oauth_error"] = "Canva authorization state expired. Please generate a new Connect Canva link and try again."
+            else:
+                client_id = str(os.environ.get("CANVA_CLIENT_ID", "")).strip()
+                client_secret = str(os.environ.get("CANVA_CLIENT_SECRET", "")).strip()
+                redirect_uri = _canva_oauth_redirect_uri()
+                if not client_id or not client_secret or not redirect_uri:
+                    st.session_state["canva_oauth_error"] = "Canva OAuth environment variables are incomplete."
+                else:
+                    token_response = requests.post(
+                        CANVA_TOKEN_URL,
+                        auth=(client_id, client_secret),
+                        data={
+                            "grant_type": "authorization_code",
+                            "code": code,
+                            "code_verifier": pending["verifier"],
+                            "redirect_uri": redirect_uri,
+                        },
+                        timeout=(10, 30),
+                    )
+                    if token_response.status_code >= 400:
+                        detail = token_response.text[:500]
+                        st.session_state["canva_oauth_error"] = f"Canva token exchange failed (HTTP {token_response.status_code}): {detail}"
+                    else:
+                        token_data = token_response.json()
+                        if not token_data.get("access_token"):
+                            st.session_state["canva_oauth_error"] = "Canva token response did not contain an access token."
+                        else:
+                            st.session_state["canva_access_token"] = token_data["access_token"]
+                            st.session_state["canva_refresh_token"] = token_data.get("refresh_token", "")
+                            st.session_state["canva_token_expiry"] = time.time() + int(token_data.get("expires_in", 14400)) - 90
+                            st.session_state["canva_oauth_error"] = ""
+                            st.session_state["canva_connected_notice"] = "Canva authorization succeeded for this app session."
+    except Exception as exc:
+        st.session_state["canva_oauth_error"] = f"Could not complete Canva authorization: {exc}"
+    finally:
+        # Remove one-time OAuth values from the visible URL after handling the callback.
+        try:
+            for key in ("code", "state", "error", "error_description"):
+                if key in st.query_params:
+                    st.query_params.pop(key, None)
+        except Exception:
+            pass
+
+
+def _canva_valid_access_token():
+    """Return a usable Canva access token, refreshing it when possible."""
+    access_token = str(st.session_state.get("canva_access_token", "") or "").strip()
+    expires_at = float(st.session_state.get("canva_token_expiry", 0) or 0)
+    if access_token and expires_at > time.time() + 30:
+        return access_token, None
+    refresh_token = str(st.session_state.get("canva_refresh_token", "") or "").strip()
+    client_id = str(os.environ.get("CANVA_CLIENT_ID", "")).strip()
+    client_secret = str(os.environ.get("CANVA_CLIENT_SECRET", "")).strip()
+    if not refresh_token or not client_id or not client_secret:
+        return None, "Canva is not connected in this browser session. Connect Canva in Section 8 before converting."
+    try:
+        response = requests.post(
+            CANVA_TOKEN_URL,
+            auth=(client_id, client_secret),
+            data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+            timeout=(10, 30),
+        )
+        if response.status_code >= 400:
+            st.session_state.pop("canva_access_token", None)
+            st.session_state.pop("canva_refresh_token", None)
+            return None, f"Canva session expired or could not refresh (HTTP {response.status_code}). Reconnect Canva in Section 8."
+        data = response.json()
+        access_token = str(data.get("access_token", "") or "")
+        if not access_token:
+            return None, "Canva refresh response did not contain an access token. Reconnect Canva."
+        st.session_state["canva_access_token"] = access_token
+        st.session_state["canva_token_expiry"] = time.time() + int(data.get("expires_in", 14400)) - 90
+        if data.get("refresh_token"):
+            st.session_state["canva_refresh_token"] = data["refresh_token"]
+        return access_token, None
+    except Exception as exc:
+        return None, f"Canva token refresh failed: {exc}"
+
+
+def _canva_parse_mcp_response(response):
+    """Parse JSON or Streamable-HTTP server-sent-event responses from Canva MCP."""
+    if response.status_code >= 400:
+        detail = response.text[:900]
+        try:
+            err_obj = response.json()
+            detail = json.dumps(err_obj, ensure_ascii=False)[:900]
+        except Exception:
+            pass
+        raise RuntimeError(f"Canva MCP HTTP {response.status_code}: {detail}")
+    body = (response.text or "").strip()
+    if not body:
+        return {}
+    content_type = str(response.headers.get("Content-Type", "")).lower()
+    if "text/event-stream" in content_type:
+        parsed_events = []
+        data_lines = []
+        for line in body.splitlines():
+            if line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+            elif not line.strip() and data_lines:
+                joined = "\n".join(data_lines)
+                try:
+                    parsed_events.append(json.loads(joined))
+                except Exception:
+                    pass
+                data_lines = []
+        if data_lines:
+            try:
+                parsed_events.append(json.loads("\n".join(data_lines)))
+            except Exception:
+                pass
+        if parsed_events:
+            return parsed_events[-1]
+        raise RuntimeError("Canva MCP returned an event stream without a JSON result.")
+    try:
+        return response.json()
+    except Exception as exc:
+        raise RuntimeError(f"Canva MCP returned an unexpected response: {body[:500]}") from exc
+
+
+def _canva_unpack_tool_result(envelope):
+    if isinstance(envelope, dict) and envelope.get("error"):
+        err = envelope["error"]
+        raise RuntimeError(str(err.get("message", err))[:900] if isinstance(err, dict) else str(err)[:900])
+    result = envelope.get("result", envelope) if isinstance(envelope, dict) else envelope
+    if not isinstance(result, dict):
+        return result
+    if result.get("isError"):
+        messages = [str(item.get("text", "")) for item in result.get("content", []) if isinstance(item, dict)]
+        raise RuntimeError(("; ".join(m for m in messages if m) or "Canva tool returned an error.")[:900])
+    for key in ("structuredContent", "structured_content"):
+        if isinstance(result.get(key), dict):
+            return result[key]
+    for block in result.get("content", []):
+        if not isinstance(block, dict) or not isinstance(block.get("text"), str):
+            continue
+        text_value = block["text"].strip()
+        try:
+            parsed = json.loads(text_value)
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        except Exception:
+            continue
+    return result
+
+
+class _CanvaMCPClient:
+    """Small Streamable-HTTP MCP client scoped to one Canva image-edit workflow."""
+    def __init__(self, token):
+        self.token = token
+        self.http = requests.Session()
+        self.session_id = None
+        self.request_id = 0
+        self.protocol_version = "2025-03-26"
+
+    def _post(self, payload):
+        headers = {
+            "Authorization": "Bearer " + self.token,
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+            headers["MCP-Protocol-Version"] = self.protocol_version
+        response = self.http.post(CANVA_MCP_URL, json=payload, headers=headers, timeout=(15, 90))
+        self.session_id = response.headers.get("Mcp-Session-Id") or response.headers.get("MCP-Session-Id") or self.session_id
+        return _canva_parse_mcp_response(response)
+
+    def initialize(self):
+        self.request_id += 1
+        init_result = self._post({
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": self.protocol_version,
+                "capabilities": {},
+                "clientInfo": {"name": "preet-sports-thumbnail-studio", "version": "1.0.0"},
+            },
+        })
+        server_result = init_result.get("result", {}) if isinstance(init_result, dict) else {}
+        accepted_version = server_result.get("protocolVersion")
+        if accepted_version:
+            self.protocol_version = accepted_version
+        self._post({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+
+    def call_tool(self, name, arguments):
+        self.request_id += 1
+        envelope = self._post({
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        })
+        return _canva_unpack_tool_result(envelope)
+
+
+def _canva_mcp_edit_player(upload_bytes, prompt):
+    """Upload a reference photo to Canva MCP, run one image edit, and retrieve its preview."""
+    token, token_error = _canva_valid_access_token()
+    if not token:
+        return None, token_error
+    client = _CanvaMCPClient(token)
+    try:
+        client.initialize()
+        with Image.open(io.BytesIO(upload_bytes)) as opened:
+            opened.load()
+            source = opened.convert("RGBA")
+            if max(source.size) > 1400:
+                scale = 1400.0 / max(source.size)
+                source = source.resize(
+                    (max(1, int(source.width * scale)), max(1, int(source.height * scale))),
+                    Image.Resampling.LANCZOS,
+                )
+            upload_buffer = io.BytesIO()
+            if source.getchannel("A").getextrema()[0] < 250:
+                source.save(upload_buffer, format="PNG", optimize=False, compress_level=2)
+                mime = "image/png"
+            else:
+                source.convert("RGB").save(upload_buffer, format="JPEG", quality=90, optimize=False)
+                mime = "image/jpeg"
+
+        upload_info = client.call_tool("create-upload-url", {})
+        upload_url = upload_info.get("uploadUrl") or upload_info.get("upload_url")
+        if not upload_url:
+            raise RuntimeError("Canva did not return an upload URL. Check that asset:write is enabled for the Canva developer app.")
+        upload_response = requests.post(
+            upload_url,
+            data=upload_buffer.getvalue(),
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=(15, 60),
+        )
+        if upload_response.status_code >= 400:
+            raise RuntimeError(f"Canva source-photo upload failed (HTTP {upload_response.status_code}): {upload_response.text[:500]}")
+        upload_result = upload_response.json()
+        media_id = upload_result.get("mediaId") or upload_result.get("media_id")
+        if not media_id:
+            raise RuntimeError("Canva accepted the upload but did not return mediaId.")
+
+        job_result = client.call_tool(
+            "generate-image",
+            {
+                "prompt": prompt,
+                "imageReferences": [{"type": "MEDIA", "id": str(media_id)}],
+                "aspectRatio": "PORTRAIT_4_5",
+                "user_intent": "Edit the supplied cricket-player photo to a front-facing pose for the user's cricket thumbnail.",
+            },
+        )
+        job_id = job_result.get("jobId") or job_result.get("job_id")
+        if not job_id and isinstance(job_result.get("job"), dict):
+            job_id = job_result["job"].get("id")
+        if not job_id:
+            raise RuntimeError("Canva did not return an image-edit job ID. No second generation request was sent.")
+        deadline = time.time() + 150
+        completed_job = None
+        while time.time() < deadline:
+            time.sleep(2.0)
+            status_result = client.call_tool("get-generate-image-job", {"jobId": job_id})
+            status = str(status_result.get("status", "")).upper()
+            if status in ("SUCCESS", "SUCCEEDED", "COMPLETED"):
+                completed_job = status_result
+                break
+            if status in ("FAILURE", "FAILED", "CANCELED", "CANCELLED"):
+                detail = status_result.get("failureMessage") or status_result.get("failure_message") or status_result.get("message") or status
+                raise RuntimeError("Canva image edit failed: " + str(detail)[:700])
+        if completed_job is None:
+            raise RuntimeError("Canva is still processing this edit after 150 seconds. Check Canva before retrying so you don't spend another AI credit unnecessarily.")
+
+        result_obj = completed_job.get("result", {})
+        results = result_obj.get("results", []) if isinstance(result_obj, dict) else []
+        media_output = next((item for item in results if isinstance(item, dict) and item.get("type") == "MEDIA" and item.get("id")), None)
+        if not media_output:
+            # Allow a direct generated-image URL if Canva adds one to the response.
+            direct_url = None
+            if isinstance(result_obj, dict):
+                direct_image = result_obj.get("image", {})
+                if isinstance(direct_image, dict):
+                    direct_url = direct_image.get("url") or direct_image.get("downloadUrl")
+            if not direct_url:
+                raise RuntimeError("Canva finished but returned no media reference or downloadable image URL.")
+            image_response = requests.get(direct_url, timeout=(10, 60))
+            image_response.raise_for_status()
+            with Image.open(io.BytesIO(image_response.content)) as opened:
+                opened.load()
+                output_image = opened.convert("RGBA")
+        else:
+            media_output_id = str(media_output["id"])
+            # Canva MCP returns a MEDIA reference. The documented asset endpoint exposes a time-limited thumbnail.
+            # Prefer any direct source URL provided by the result; otherwise use that preview and report its resolution.
+            asset_response = requests.get(
+                "https://api.canva.com/rest/v1/assets/" + media_output_id,
+                headers={"Authorization": "Bearer " + token},
+                timeout=(10, 30),
+            )
+            asset_response.raise_for_status()
+            asset_data = asset_response.json().get("asset", {})
+            thumbnail = asset_data.get("thumbnail", {}) if isinstance(asset_data, dict) else {}
+            preview_url = thumbnail.get("url")
+            if not preview_url:
+                raise RuntimeError(
+                    "Canva created the edited image, but the public API response has no downloadable image URL—only a Canva media reference. "
+                    "Open the generated image in Canva and download the original, or use a provider that returns the image file directly."
+                )
+            image_response = requests.get(preview_url, timeout=(10, 60))
+            image_response.raise_for_status()
+            with Image.open(io.BytesIO(image_response.content)) as opened:
+                opened.load()
+                output_image = opened.convert("RGBA")
+            w, h = output_image.size
+            st.session_state["canva_pose_quality_note"] = (
+                f"Canva returned an asset preview at {w} × {h} px, not a verified full-resolution original. "
+                "The thumbnail canvas still exports at 3840 × 2160, but this portrait may look softer when enlarged."
+            )
+        try:
+            output_image = _remove_magenta_chroma_background(output_image)
+        except ValueError as exc:
+            if output_image.getchannel("A").getextrema()[0] >= 250:
+                raise RuntimeError(str(exc)) from exc
+        return output_image, None
+    except Exception as exc:
+        return None, f"Canva AI front-pose conversion failed: {exc}"
+
+
+# Process the callback when Canva redirects the browser back into this Streamlit app.
+_canva_process_oauth_callback()
+
 
 CANVAS_WIDTH = 3840
 CANVAS_HEIGHT = 2160
@@ -966,6 +1358,11 @@ def convert_player_to_front_facing(upload_bytes, filename, side):
         "without gradient or shadow, so the app can remove it locally. Portrait for the " + side_label +
         " side of a cricket YouTube thumbnail."
     )
+
+    # Prefer Canva's reference-image edit when the user has connected their Canva account.
+    # This launches one Canva image-generation job per click and consumes applicable Canva AI credits.
+    if str(st.session_state.get("canva_access_token", "") or "").strip():
+        return _canva_mcp_edit_player(upload_bytes, prompt)
 
     # Hosted reference-image editing. No API request is sent until the user clicks Convert.
     # Replicate currently lists Qwen Image Edit Plus at about US$0.03 per output image.
@@ -2567,12 +2964,54 @@ with col_left:
         key="stadium_background_url",
     )
     bg_file = st.file_uploader("Or upload your own 16:9 stadium background", type=["png", "jpg", "jpeg", "webp"])
-    st.subheader("8. Local AI Tool — Front-Facing Pose Conversion (ComfyUI)")
+    st.subheader("8. AI Front-Facing Pose Conversion — Canva / Replicate / ComfyUI")
     st.info(
         "Open-source ComfyUI workflow integration; no Gemini or paid AI API is called by this app. The prompt prioritizes keeping "
         "the same player's identity while changing pose, but diffusion models can still alter facial details. Use an identity-aware "
         "workflow (for example, InstantID/IPAdapter FaceID where licensing and model requirements permit), low denoise, and inspect results."
     )
+    st.markdown("**Canva AI reference-photo editing**")
+    st.caption(
+        "When connected, the front-pose buttons below use Canva's official MCP generate-image tool with the uploaded photo as a reference. "
+        "One conversion launches one Canva image-edit job and uses your account's applicable AI allowance. Canva Free has access to image tools, "
+        "but daily/monthly AI limits are controlled by Canva."
+    )
+    canva_client_id = str(os.environ.get("CANVA_CLIENT_ID", "")).strip()
+    canva_client_secret = str(os.environ.get("CANVA_CLIENT_SECRET", "")).strip()
+    canva_redirect_uri = _canva_oauth_redirect_uri()
+    if st.session_state.get("canva_access_token"):
+        st.success("Canva is connected for this browser session. The front-pose buttons will use Canva first.")
+        if st.button("Disconnect Canva for this session", key="canva_disconnect_session"):
+            for token_key in ("canva_access_token", "canva_refresh_token", "canva_token_expiry"):
+                st.session_state.pop(token_key, None)
+            st.session_state["canva_oauth_error"] = ""
+            st.rerun()
+    elif not canva_client_id or not canva_client_secret:
+        st.warning(
+            "To enable Canva, create an app at canva.com/developers, enable **Canva MCP** under Outside Canva, "
+            "and add CANVA_CLIENT_ID, CANVA_CLIENT_SECRET, and CANVA_REDIRECT_URI to Render Environment. "
+            "Never paste the client secret into this page or commit it to GitHub."
+        )
+        st.markdown("[Open Canva Developer Portal](https://www.canva.com/developers/)")
+    elif not canva_redirect_uri:
+        st.warning("Set CANVA_REDIRECT_URI to this app's public Render URL and register the identical URL in Canva Developer Portal.")
+    else:
+        cached_auth_url = st.session_state.get("canva_authorize_url")
+        cached_auth_created = float(st.session_state.get("canva_authorize_created_at", 0) or 0)
+        if not cached_auth_url or time.time() - cached_auth_created > 600:
+            cached_auth_url, auth_error = _canva_authorization_link()
+            if cached_auth_url:
+                st.session_state["canva_authorize_url"] = cached_auth_url
+                st.session_state["canva_authorize_created_at"] = time.time()
+            else:
+                st.session_state["canva_oauth_error"] = auth_error
+        if st.session_state.get("canva_authorize_url"):
+            st.link_button("🔗 Connect Canva AI", st.session_state["canva_authorize_url"], use_container_width=True)
+            st.caption("Approve access in Canva, then continue from the tab Canva redirects back to this app.")
+    if st.session_state.get("canva_oauth_error"):
+        st.error(str(st.session_state["canva_oauth_error"]))
+    if st.session_state.get("canva_pose_quality_note"):
+        st.warning(str(st.session_state["canva_pose_quality_note"]))
     st.warning(
         "Render limitation: this app does not include a hosted AI model and Render's standard web service is not a free GPU. "
         "A Render deployment cannot reach your PC at 127.0.0.1. You must provide a running ComfyUI-compatible endpoint reachable "
@@ -2789,9 +3228,9 @@ def _pose_source_hash(image):
 # ICC auto-fetched images. They are separate from the optional manual-upload controls above.
 st.markdown("**Front-face the current thumbnail portraits**")
 st.caption(
-    "One-click reference-image editing: set REPLICATE_API_TOKEN in Render Environment for the hosted Qwen Image Edit Plus model "
-    "(about US$0.03 per output image; paid inference, not unlimited free). If that secret is absent, the app falls back to the existing ComfyUI workflow. "
-    "The original portrait is retained if conversion fails."
+    "Priority: connected Canva MCP reference-photo editing (uses Canva AI allowance, one generation job per click); otherwise Replicate if configured; "
+    "otherwise the existing ComfyUI workflow. Canva MCP's documented result is a media reference, and the current public asset endpoint may return only a preview thumbnail, "
+    "so inspect the output quality before using it for a 4K thumbnail. The original portrait is retained if conversion fails."
 )
 pose_left_col, pose_right_col = st.columns(2)
 with pose_left_col:
