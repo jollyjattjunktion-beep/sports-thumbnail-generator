@@ -186,12 +186,12 @@ TEAM_FLAG_DATABASE = {
 # For best results, paste match-specific, high-resolution, transparent player PNG/WebP URLs.
 CAPTAIN_DATABASE = {
     "IND": {
-        "name": "Rohit Sharma",
-        "player_png": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Rohit_Sharma_during_the_India_vs_Australia_match_in_2023.png/800px-Rohit_Sharma_during_the_India_vs_Australia_match_in_2023.png",
+        "name": "Shreyas Iyer",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/63961.png",
     },
     "INDIA": {
-        "name": "Rohit Sharma",
-        "player_png": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Rohit_Sharma_during_the_India_vs_Australia_match_in_2023.png/800px-Rohit_Sharma_during_the_India_vs_Australia_match_in_2023.png",
+        "name": "Shreyas Iyer",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/63961.png",
     },
     "WI": {
         "name": "Shai Hope",
@@ -252,8 +252,52 @@ CAPTAIN_DATABASE = {
         "player_png": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Temba_Bavuma_2023.png/800px-Temba_Bavuma_2023.png",
     },
     "NZ": {
-        "name": "Kane Williamson",
-        "player_png": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/Kane_Williamson_in_2019.png/800px-Kane_Williamson_in_2019.png",
+        "name": "Mitchell Santner",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/57903.png",
+    },
+    "IND-W": {
+        "name": "Smriti Mandhana",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/63992.png",
+    },
+    "IND W": {
+        "name": "Smriti Mandhana",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/63992.png",
+    },
+    "IND WOMEN": {
+        "name": "Smriti Mandhana",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/63992.png",
+    },
+    "INDIA WOMEN": {
+        "name": "Smriti Mandhana",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/63992.png",
+    },
+    "NZ-W": {
+        "name": "Amelia Kerr",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/66632.png",
+    },
+    "NZ W": {
+        "name": "Amelia Kerr",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/66632.png",
+    },
+    "NEW ZEALAND WOMEN": {
+        "name": "Amelia Kerr",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/66632.png",
+    },
+    "BAN-W": {
+        "name": "Nahida Akter",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/65721.png",
+    },
+    "BAN W": {
+        "name": "Nahida Akter",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/65721.png",
+    },
+    "BAN WOMEN": {
+        "name": "Nahida Akter",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/65721.png",
+    },
+    "BANGLADESH WOMEN": {
+        "name": "Nahida Akter",
+        "player_png": "https://images.icc-cricket.com/image/upload/t_player-headshot-portrait-lg-webp/prd/assets/players/generic/colored/65721.png",
     },
 }
 
@@ -269,6 +313,111 @@ def normalize_team_base(team_name):
     key = re.sub(r"(?:\s+WOMEN|\s+WOMENS|\s+WOMAN|[-_\s]+W)$", "", key)
     key = re.sub(r"[-_\s]+MEN$", "", key)
     return key.strip()
+
+
+# Official ICC player-profile URLs used when the user enters team names without URLs.
+# Captaincy varies by format, so profiles are selected using the Match Format / Badge field.
+ICC_TEAM_CAPTAIN_PROFILES = {
+    "IND": {
+        "T20": "https://www.icc-cricket.com/rankings/63961/shreyas-iyer",
+        "ODI": "https://www.icc-cricket.com/rankings/66818/shubman-gill",
+        "TEST": "https://www.icc-cricket.com/rankings/66818/shubman-gill",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/63961/shreyas-iyer",
+    },
+    "NZ": {
+        "T20": "https://www.icc-cricket.com/rankings/57903/mitchell-santner",
+        "ODI": "https://www.icc-cricket.com/rankings/57903/mitchell-santner",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/57903/mitchell-santner",
+    },
+    "AUS": {
+        "T20": "https://www.icc-cricket.com/rankings/10094/mitchell-marsh",
+        "ODI": "https://www.icc-cricket.com/rankings/56964/pat-cummins",
+        "TEST": "https://www.icc-cricket.com/rankings/56964/pat-cummins",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/10094/mitchell-marsh",
+    },
+    "ENG": {
+        "T20": "https://www.icc-cricket.com/rankings/66374/harry-brook",
+        "ODI": "https://www.icc-cricket.com/rankings/66374/harry-brook",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/66374/harry-brook",
+    },
+    "WI": {
+        "T20": "https://www.icc-cricket.com/rankings/63797/shai-hope",
+        "ODI": "https://www.icc-cricket.com/rankings/63797/shai-hope",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/63797/shai-hope",
+    },
+    "SA": {
+        "T20": "https://www.icc-cricket.com/rankings/64219/aiden-markram",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/64219/aiden-markram",
+    },
+    "IND-W": {
+        "T20": "https://www.icc-cricket.com/rankings/63992/smriti-mandhana",
+        "ODI": "https://www.icc-cricket.com/rankings/63992/smriti-mandhana",
+        "TEST": "https://www.icc-cricket.com/rankings/63992/smriti-mandhana",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/63992/smriti-mandhana",
+    },
+    "NZ-W": {
+        "T20": "https://www.icc-cricket.com/rankings/66632/amelia-kerr",
+        "ODI": "https://www.icc-cricket.com/rankings/66632/amelia-kerr",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/66632/amelia-kerr",
+    },
+    "AUS-W": {
+        "T20": "https://www.icc-cricket.com/rankings/67041/sophie-molineux",
+        "ODI": "https://www.icc-cricket.com/rankings/67041/sophie-molineux",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/67041/sophie-molineux",
+    },
+    "ENG-W": {
+        "T20": "https://www.icc-cricket.com/rankings/63998/nat-sciver-brunt",
+        "ODI": "https://www.icc-cricket.com/rankings/63998/nat-sciver-brunt",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/63998/nat-sciver-brunt",
+    },
+    "SA-W": {
+        "T20": "https://www.icc-cricket.com/rankings/66176/laura-wolvaardt",
+        "ODI": "https://www.icc-cricket.com/rankings/66176/laura-wolvaardt",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/66176/laura-wolvaardt",
+    },
+    "BAN-W": {
+        "ODI": "https://www.icc-cricket.com/rankings/65720/nigar-sultana",
+        "T20": "https://www.icc-cricket.com/rankings/65721/nahida-akter",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/65720/nigar-sultana",
+    },
+    "PAK-W": {
+        "T20": "https://www.icc-cricket.com/rankings/71759/fatima-sana",
+        "ODI": "https://www.icc-cricket.com/rankings/71759/fatima-sana",
+        "DEFAULT": "https://www.icc-cricket.com/rankings/71759/fatima-sana",
+    },
+}
+
+
+def get_icc_team_captain_profile_url(team_name, match_format="T20"):
+    """Choose a known ICC player profile for the entered team and format."""
+    raw = normalize_team_name(team_name)
+    if not raw:
+        return None
+    is_women = bool(re.search(r"(?:\bWOMEN\b|\bWOMENS\b|\bWOMAN\b|[-_\s]W$)", raw))
+    base = normalize_team_base(raw)
+    aliases = {
+        "INDIA": "IND",
+        "NEW ZEALAND": "NZ",
+        "AUSTRALIA": "AUS",
+        "ENGLAND": "ENG",
+        "WEST INDIES": "WI",
+        "SOUTH AFRICA": "SA",
+        "BANGLADESH": "BAN",
+        "PAKISTAN": "PAK",
+        "SRI LANKA": "SL",
+    }
+    code = aliases.get(base, base) + ("-W" if is_women else "")
+    badge = normalize_team_name(match_format)
+    if "T20" in badge:
+        fmt = "T20"
+    elif "ODI" in badge or "ONE DAY" in badge:
+        fmt = "ODI"
+    elif "TEST" in badge:
+        fmt = "TEST"
+    else:
+        fmt = "DEFAULT"
+    profiles = ICC_TEAM_CAPTAIN_PROFILES.get(code, {})
+    return profiles.get(fmt) or profiles.get("DEFAULT")
 
 
 def get_team_flag_url(team_name):
@@ -1644,6 +1793,61 @@ with col_left:
     with col_t2:
         team2 = st.text_input("Right Team Name", value=st.session_state.t2_code or "ZIM-W", key="team2_name_input").strip().upper()
 
+    # Automatically fetch mapped official ICC player portraits when team names or match format change.
+    # Cached image downloads keep ordinary page reruns fast and prevent repeated network calls.
+    auto_format = st.session_state.get("match_badge_input", "T20")
+    auto_signature = (
+        normalize_team_name(team1),
+        normalize_team_name(team2),
+        normalize_team_name(auto_format),
+    )
+    previous_signature = st.session_state.get("_icc_team_image_signature")
+    if previous_signature != auto_signature:
+        # Do not carry an automatically selected ICC portrait across a team/format change.
+        if st.session_state.get("p1_cutout_source") == "team_icc_auto":
+            st.session_state.p1_cutout = None
+            st.session_state["p1_cutout_source"] = None
+        if st.session_state.get("p2_cutout_source") == "team_icc_auto":
+            st.session_state.p2_cutout = None
+            st.session_state["p2_cutout_source"] = None
+        st.session_state["_icc_team_image_signature"] = auto_signature
+        auto_loaded = 0
+        auto_missing = []
+        auto_failed = []
+        for side, team_name in (("left", team1), ("right", team2)):
+            profile_url = get_icc_team_captain_profile_url(team_name, auto_format)
+            if not profile_url:
+                if team_name:
+                    auto_missing.append(team_name)
+                continue
+            resolved_url = resolve_player_image_url(profile_url)
+            image = fetch_online_image(resolved_url) if resolved_url else None
+            if image is None:
+                auto_failed.append(team_name)
+                continue
+            if side == "left":
+                st.session_state.p1_cutout = image
+                st.session_state["p1_cutout_source"] = "team_icc_auto"
+            else:
+                st.session_state.p2_cutout = image
+                st.session_state["p2_cutout_source"] = "team_icc_auto"
+            auto_loaded += 1
+        if auto_loaded:
+            st.success(f"Auto-fetched {auto_loaded} official ICC player photo(s) from the team names.")
+        if auto_missing:
+            st.info(
+                "No automatic ICC captain profile is mapped for: "
+                + ", ".join(auto_missing)
+                + ". For an exact match-specific captain, paste an ESPNcricinfo match/squad URL or an ICC player-profile URL above."
+            )
+        if auto_failed:
+            st.warning(
+                "ICC profile(s) were found, but the images could not be downloaded for: "
+                + ", ".join(auto_failed)
+                + ". Check that the Render service can reach images.icc-cricket.com."
+            )
+
+    st.caption("ICC portraits auto-load for recognized team names. Match-specific teams without a mapped captain still work through the squad URL or the ICC profile URL fields above.")
     swap_player_photos = st.checkbox(
         "Swap LEFT / RIGHT player photos (use if extracted players are in reverse order)",
         value=False,
