@@ -373,13 +373,36 @@ def _canva_mcp_edit_player(upload_bytes, prompt):
             media_output_id = str(media_output["id"])
             # Canva MCP returns a MEDIA reference. The documented asset endpoint exposes a time-limited thumbnail.
             # Prefer any direct source URL provided by the result; otherwise use that preview and report its resolution.
-            asset_response = requests.get(
-                "https://api.canva.com/rest/v1/assets/" + media_output_id,
-                headers={"Authorization": "Bearer " + token},
-                timeout=(10, 30),
-            )
-            asset_response.raise_for_status()
-            asset_data = asset_response.json().get("asset", {})
+            asset_data = {}
+            try:
+                asset_response = requests.get(
+                    "https://api.canva.com/rest/v1/assets/" + media_output_id,
+                    headers={"Authorization": "Bearer " + token},
+                    timeout=(10, 30),
+                )
+                asset_response.raise_for_status()
+                asset_data = asset_response.json().get("asset", {})
+            except Exception:
+                # Some MCP media references are returned before they behave like regular REST assets.
+                # Try Canva MCP's own asset lookup before returning a clear limitation.
+                try:
+                    asset_lookup = client.call_tool(
+                        "get-assets",
+                        {
+                            "asset_ids": [media_output_id],
+                            "user_intent": "Retrieve the preview of the front-facing player image just generated.",
+                        },
+                    )
+                    if isinstance(asset_lookup, list) and asset_lookup:
+                        asset_data = asset_lookup[0] if isinstance(asset_lookup[0], dict) else {}
+                    elif isinstance(asset_lookup, dict):
+                        asset_list = asset_lookup.get("assets") or asset_lookup.get("items") or []
+                        if isinstance(asset_list, list) and asset_list and isinstance(asset_list[0], dict):
+                            asset_data = asset_list[0].get("asset", asset_list[0])
+                        else:
+                            asset_data = asset_lookup.get("asset", asset_lookup)
+                except Exception:
+                    asset_data = {}
             thumbnail = asset_data.get("thumbnail", {}) if isinstance(asset_data, dict) else {}
             preview_url = thumbnail.get("url")
             if not preview_url:
