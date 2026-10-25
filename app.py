@@ -1149,6 +1149,59 @@ def resolve_player_image_url(player_url):
     return player_url
 
 
+def fetch_icc_player_image(profile_url, attempts=3):
+    """Fetch official ICC profile portraits with retries and longer timeouts.
+
+    Intentionally not cached on failure: the general image fetcher caches None for 24 hours,
+    which can make a temporary ICC/CDN timeout look permanent until the cache expires.
+    Returns (PIL image or None, short error reason or None).
+    """
+    image_url = resolve_player_image_url(profile_url)
+    if not image_url or not image_url.startswith(("http://", "https://")):
+        return None, "invalid profile/image URL"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": "https://www.icc-cricket.com/",
+    }
+    last_error = "unknown download error"
+    import time
+    for attempt in range(max(1, int(attempts))):
+        response = None
+        try:
+            response = requests.get(image_url, headers=headers, timeout=(5, 15))
+            if response.status_code in (408, 429) or response.status_code >= 500:
+                last_error = f"temporary HTTP {response.status_code}"
+                if attempt + 1 < attempts:
+                    time.sleep(0.6 * (attempt + 1))
+                    continue
+            response.raise_for_status()
+            payload = response.content
+            if not payload or len(payload) > 30 * 1024 * 1024:
+                return None, "empty or unusually large image response"
+            with Image.open(io.BytesIO(payload)) as opened:
+                opened.load()
+                image = opened.convert("RGBA")
+            if image.width < 80 or image.height < 80:
+                return None, "downloaded image is unexpectedly small"
+            return image, None
+        except requests.Timeout:
+            last_error = "request timed out"
+        except requests.HTTPError:
+            last_error = f"HTTP {response.status_code}" if response is not None else "HTTP error"
+        except requests.RequestException as exc:
+            last_error = f"network error ({type(exc).__name__})"
+        except Exception as exc:
+            last_error = f"invalid image response ({type(exc).__name__})"
+            # Image decoding failures are unlikely to be fixed by another network retry.
+            if response is not None and response.content:
+                return None, last_error
+        if attempt + 1 < attempts:
+            time.sleep(0.6 * (attempt + 1))
+    return None, last_error
+
+
 def _player_image_from_object(player_obj):
     """Read image URLs from several common ESPNcricinfo JSON shapes."""
     if not isinstance(player_obj, dict):
@@ -1838,7 +1891,13 @@ with col_left:
         normalize_team_name(auto_format),
     )
     previous_signature = st.session_state.get("_icc_team_image_signature")
-    if previous_signature != auto_signature:
+    retry_icc_fetch = st.button(
+        "🔄 Retry automatic ICC photo fetch",
+        key="retry_icc_team_image_fetch",
+        help="Retries official ICC image downloads without using the long-lived cache for failed requests.",
+        use_container_width=True,
+    )
+    if previous_signature != auto_signature or retry_icc_fetch:
         # Do not carry an automatically selected ICC portrait across a team/format change.
         if st.session_state.get("p1_cutout_source") == "team_icc_auto":
             st.session_state.p1_cutout = None
@@ -1860,10 +1919,9 @@ with col_left:
                 if team_name:
                     auto_missing.append(team_name)
                 continue
-            resolved_url = resolve_player_image_url(profile_url)
-            image = fetch_online_image(resolved_url) if resolved_url else None
+            image, image_error = fetch_icc_player_image(profile_url, attempts=3)
             if image is None:
-                auto_failed.append(team_name)
+                auto_failed.append(f"{team_name} ({image_error or 'download failed'})")
                 continue
             if side == "left":
                 st.session_state.p1_cutout = image
@@ -1880,11 +1938,13 @@ with col_left:
                 + ", ".join(auto_missing)
                 + ". For an exact match-specific captain, paste an ESPNcricinfo match/squad URL or an ICC player-profile URL above."
             )
+        st.session_state["_icc_team_image_failed"] = list(auto_failed)
         if auto_failed:
             st.warning(
-                "ICC profile(s) were found, but the images could not be downloaded for: "
+                "Could not download these official ICC portraits after 3 attempts: "
                 + ", ".join(auto_failed)
-                + ". Check that the Render service can reach images.icc-cricket.com."
+                + ". Tap ‘Retry automatic ICC photo fetch’ once more. If it keeps failing, use a direct image URL in Section 2. "
+                "The general image cache is bypassed here so temporary failures are not cached for a full day."
             )
 
     st.caption("ICC portraits auto-load for recognized team names. Match-specific teams without a mapped captain still work through the squad URL or the ICC profile URL fields above.")
