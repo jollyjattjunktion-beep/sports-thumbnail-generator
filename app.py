@@ -2432,9 +2432,9 @@ def generate_thumbnail_match_talk(bg_img, p1_img, p2_img, channel_text, match_st
               stroke_width=2, stroke_fill=(20, 12, 12, 255))
 
     # Black bottom plates with yellow outlines; arrows point inward from both sides.
-    team_y = int(h * 0.805)
+    team_y = int(h * 0.80)
     team_w = int(w * 0.405)
-    team_h = int(h * 0.17)
+    team_h = int(h * 0.15)
     draw_match_talk_arrow(draw, 0, team_y, team_w, team_h, high_ctr_team_label(t1_name), "left")
     draw_match_talk_arrow(draw, w - team_w, team_y, team_w, team_h, high_ctr_team_label(t2_name), "right")
 
